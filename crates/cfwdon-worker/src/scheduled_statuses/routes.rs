@@ -133,7 +133,10 @@ async fn resolve_scheduled_status_request_access(
                 application_id: Some(auth.token.oauth_app_id),
             }))
         }
-        LocalApiAuthentication::AppToken | LocalApiAuthentication::InvalidBearer => Ok(None),
+        // The handler's 401 becomes the 403 the pending credential recorded.
+        LocalApiAuthentication::AppToken
+        | LocalApiAuthentication::InvalidBearer
+        | LocalApiAuthentication::PendingApproval(_) => Ok(None),
         LocalApiAuthentication::Auth0(viewer) => {
             let application_id = match request_scheduled_status_application_id(req, db).await {
                 Ok(value) => value,

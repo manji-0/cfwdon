@@ -44,22 +44,29 @@ pub enum ReviewOutcome {
     Rejected,
 }
 
-/// The instance's `registrations_mode`, short of Mastodon's `none`.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+/// The instance's `registrations_mode`, named as Mastodon names it.
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+)]
+#[serde(rename_all = "lowercase")]
 pub enum RegistrationsMode {
     #[default]
     Open,
     /// Every sign-up waits for an admin.
     Approved,
+    /// Mastodon's `none`: no sign-ups at all.
+    #[serde(rename = "none")]
+    Closed,
 }
 
 impl RegistrationsMode {
-    pub const ALL: [Self; 2] = [Self::Open, Self::Approved];
+    pub const ALL: [Self; 3] = [Self::Open, Self::Approved, Self::Closed];
 
     pub fn from_name(name: &str) -> Option<Self> {
         match name.trim().to_ascii_lowercase().as_str() {
             "open" => Some(Self::Open),
             "approved" => Some(Self::Approved),
+            "none" => Some(Self::Closed),
             _ => None,
         }
     }
@@ -68,28 +75,46 @@ impl RegistrationsMode {
         match self {
             Self::Open => "open",
             Self::Approved => "approved",
+            Self::Closed => "none",
         }
     }
 
-    /// `approval_required` in the instance document.
+    /// `registrations` (v1) and `registrations.enabled` (v2) in the instance
+    /// documents.
+    pub fn registrations_enabled(self) -> bool {
+        self != Self::Closed
+    }
+
+    /// `approval_required` in the instance documents.
     pub fn approval_required(self) -> bool {
         self == Self::Approved
     }
+}
+
+/// Mastodon's `UserInviteRequest::TEXT_SIZE_LIMIT`: the longest sign-up
+/// `reason` it takes, in characters.
+pub const SIGN_UP_REASON_MAX_CHARS: usize = 420;
+
+/// Whether a sign-up `reason` is over [`SIGN_UP_REASON_MAX_CHARS`]; Mastodon
+/// answers such a sign-up with `422`.
+pub fn sign_up_reason_too_long(reason: &str) -> bool {
+    reason.chars().count() > SIGN_UP_REASON_MAX_CHARS
 }
 
 /// A sign-up the instance refuses outright.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct SignUpRefused;
 
-/// Mastodon's `RegistrationHelper#allowed_registration?` refuses a
-/// `sign_up_block` range; `User#set_approved` then holds the account when the
-/// address needs approval or the instance approves every sign-up.
+/// Mastodon's `RegistrationHelper#allowed_registration?` refuses a sign-up
+/// when registrations are closed or the address is in a `sign_up_block`
+/// range; `User#set_approved` then holds the account when the address needs
+/// approval or the instance approves every sign-up.
 pub fn sign_up_approval(
     mode: RegistrationsMode,
     ip: IpSignUpDecision,
 ) -> Result<AccountApproval, SignUpRefused> {
     match (ip, mode) {
-        (IpSignUpDecision::Blocked, _) => Err(SignUpRefused),
+        (IpSignUpDecision::Blocked, _) | (_, RegistrationsMode::Closed) => Err(SignUpRefused),
         (IpSignUpDecision::RequiresApproval, _) | (_, RegistrationsMode::Approved) => {
             Ok(AccountApproval::Pending)
         }
@@ -112,6 +137,13 @@ mod tests {
             (RegistrationsMode::Approved, Open, Ok(Pending)),
             (RegistrationsMode::Approved, RequiresApproval, Ok(Pending)),
             (RegistrationsMode::Approved, Blocked, Err(SignUpRefused)),
+            (RegistrationsMode::Closed, Open, Err(SignUpRefused)),
+            (
+                RegistrationsMode::Closed,
+                RequiresApproval,
+                Err(SignUpRefused),
+            ),
+            (RegistrationsMode::Closed, Blocked, Err(SignUpRefused)),
         ] {
             assert_eq!(sign_up_approval(mode, ip), expected, "{mode:?} {ip:?}");
         }
@@ -135,6 +167,16 @@ mod tests {
     }
 
     #[test]
+    fn sign_up_reason_is_capped_in_characters() {
+        assert!(!sign_up_reason_too_long(
+            &"あ".repeat(SIGN_UP_REASON_MAX_CHARS)
+        ));
+        assert!(sign_up_reason_too_long(
+            &"a".repeat(SIGN_UP_REASON_MAX_CHARS + 1)
+        ));
+    }
+
+    #[test]
     fn registrations_mode_names_round_trip() {
         for mode in RegistrationsMode::ALL {
             assert_eq!(RegistrationsMode::from_name(mode.as_str()), Some(mode));
@@ -143,6 +185,10 @@ mod tests {
             RegistrationsMode::from_name(" Approved "),
             Some(RegistrationsMode::Approved)
         );
-        assert_eq!(RegistrationsMode::from_name("none"), None);
+        assert_eq!(
+            RegistrationsMode::from_name("none"),
+            Some(RegistrationsMode::Closed)
+        );
+        assert_eq!(RegistrationsMode::from_name("closed"), None);
     }
 }

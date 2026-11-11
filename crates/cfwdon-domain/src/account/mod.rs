@@ -5,16 +5,15 @@ mod registration;
 mod username;
 
 pub use approval::{
-    AccountApproval, ApprovalReview, RegistrationsMode, ReviewOutcome, SignUpRefused,
-    sign_up_approval,
+    AccountApproval, ApprovalReview, RegistrationsMode, ReviewOutcome, SIGN_UP_REASON_MAX_CHARS,
+    SignUpRefused, sign_up_approval, sign_up_reason_too_long,
 };
 pub use email::{AccessEmail, AccessEmailError};
 pub use record::LocalAccountRecord;
 pub use registration::{
-    AccessProvisionError, AccessProvisionIntent, AccountKeyMaterial, ComposingAccessProvision,
-    ComposingRegistration, RegisteringAccount, RegistrationEvent, RegistrationFieldIssue,
-    RegistrationIntent, RegistrationUniquenessFacts, RegistrationValidationErrors,
-    RegistrationValidationField, finalize_registration_validation,
+    AccountKeyMaterial, ComposingRegistration, RegisteringAccount, RegistrationEvent,
+    RegistrationFieldIssue, RegistrationIntent, RegistrationUniquenessFacts,
+    RegistrationValidationErrors, RegistrationValidationField, finalize_registration_validation,
     registration_field_issue_message, registration_uniqueness_errors,
 };
 pub use username::{Username, UsernameError};

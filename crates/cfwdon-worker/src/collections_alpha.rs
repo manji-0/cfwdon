@@ -1,5 +1,7 @@
 use crate::activitypub::local_username_from_actor_uri;
-use crate::auth::{LocalApiAuthentication, authenticate_local_api_request};
+use crate::auth::{
+    LocalApiAuthentication, authenticate_local_api_request, pending_approval_response,
+};
 use crate::federation::{RemoteActorProfile, fetch_remote_activitypub_document};
 use crate::identity::{actor_url, remote_account_rest_id};
 use crate::oauth_store::{app_bearer_token_from_request, oauth_access_token_has_any_scope};
@@ -306,6 +308,9 @@ async fn optional_collection_viewer(
                 }));
             }
             LocalApiAuthentication::None => return Ok(Err(invalid_access_token_response()?)),
+            LocalApiAuthentication::PendingApproval(_) => {
+                return Ok(Err(pending_approval_response()?));
+            }
         }
     }
 
@@ -315,6 +320,9 @@ async fn optional_collection_viewer(
         LocalApiAuthentication::OAuthToken(auth) => Some(auth.account),
         LocalApiAuthentication::AppToken | LocalApiAuthentication::InvalidBearer => {
             return Ok(Err(invalid_access_token_response()?));
+        }
+        LocalApiAuthentication::PendingApproval(_) => {
+            return Ok(Err(pending_approval_response()?));
         }
     };
     Ok(Ok(CollectionViewer { account }))
@@ -336,6 +344,7 @@ async fn require_collection_reader(
         LocalApiAuthentication::AppToken
         | LocalApiAuthentication::InvalidBearer
         | LocalApiAuthentication::None => Ok(Err(invalid_access_token_response()?)),
+        LocalApiAuthentication::PendingApproval(_) => Ok(Err(pending_approval_response()?)),
     }
 }
 
@@ -355,6 +364,7 @@ async fn require_collection_writer(
         LocalApiAuthentication::AppToken
         | LocalApiAuthentication::InvalidBearer
         | LocalApiAuthentication::None => Ok(Err(invalid_access_token_response()?)),
+        LocalApiAuthentication::PendingApproval(_) => Ok(Err(pending_approval_response()?)),
     }
 }
 

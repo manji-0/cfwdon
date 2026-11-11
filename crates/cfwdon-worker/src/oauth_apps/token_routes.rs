@@ -5,7 +5,7 @@ use super::{
     oauth_app_scopes, parse_basic_authorization_header, pkce_verifier_matches,
     redirect_uri_matches_registered,
 };
-use crate::auth::find_account_by_id;
+use crate::auth::{AccountLookup, find_account_by_id_with};
 use crate::oauth_store::{OAuthAppRow, link_oauth_app_to_account, oauth_bearer_token_hash};
 use crate::runtime_config::load_config;
 use crate::time_html::now_unix_timestamp;
@@ -208,7 +208,7 @@ async fn oauth_authorization_code_token_response(
     let access_token = issue_oauth_access_token(db, app.id, &code_row.account_id, &scopes).await?;
     link_oauth_app_to_account(db, app.id, &code_row.account_id).await?;
     delete_oauth_authorization_code(db, &code_row.code).await?;
-    if find_account_by_id(db, &code_row.account_id)
+    if find_account_by_id_with(db, &code_row.account_id, AccountLookup::IncludingPending)
         .await?
         .is_none()
     {

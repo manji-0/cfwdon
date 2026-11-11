@@ -65,6 +65,7 @@ fn validation_failed_response(details: BTreeMap<&'static str, Vec<String>>) -> R
             "email" => "Email",
             "password" => "Password",
             "agreement" => "Agreement",
+            "reason" => "Reason",
             _ => field,
         };
         for error in field_errors {

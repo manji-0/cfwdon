@@ -91,7 +91,7 @@ fn build_nodeinfo_schema_document(
             "inbound": [],
             "outbound": [],
         },
-        "openRegistrations": instance_open_registrations(),
+        "openRegistrations": instance_open_registrations(config),
         "usage": {
             "users": {
                 "total": user_count,
@@ -116,7 +116,7 @@ mod tests {
     use crate::identity::{nodeinfo_21_url, nodeinfo_url};
     use crate::instance::instance_open_registrations;
     use cfwdon_core::AppConfig;
-    use cfwdon_domain::{InstanceCapabilities, InstanceSummary, SoftwareInfo};
+    use cfwdon_domain::{InstanceCapabilities, InstanceSummary, RegistrationsMode, SoftwareInfo};
 
     fn sample_summary() -> InstanceSummary {
         InstanceSummary {
@@ -149,14 +149,20 @@ mod tests {
 
     #[test]
     fn nodeinfo_open_registrations_matches_instance_helper() {
-        let config = AppConfig::new("https://social.example", "cfwdon", "test instance");
-        let document =
-            build_nodeinfo_document_with_halfyear(&sample_summary(), &config, 1, 1, 1, 1);
-        assert_eq!(
-            document["openRegistrations"],
-            serde_json::json!(instance_open_registrations())
-        );
-        assert!(!instance_open_registrations());
+        let mut config = AppConfig::new("https://social.example", "cfwdon", "test instance");
+        for mode in RegistrationsMode::ALL {
+            config.registrations_mode = mode;
+            let document =
+                build_nodeinfo_document_with_halfyear(&sample_summary(), &config, 1, 1, 1, 1);
+            assert_eq!(
+                document["openRegistrations"],
+                serde_json::json!(mode != RegistrationsMode::Closed)
+            );
+            assert_eq!(
+                document["openRegistrations"],
+                serde_json::json!(instance_open_registrations(&config))
+            );
+        }
     }
 
     #[test]

@@ -3,7 +3,7 @@ use super::{
     clear_auth0_authorize_state_cookie, constant_time_eq, oauth_authorize_error_response,
     redirect_response,
 };
-use crate::auth::{find_account_by_email, verify_auth0_jwt};
+use crate::auth::{find_account_id_holding_email, verify_auth0_jwt};
 use crate::db_session::bind_request_d1;
 use crate::oauth_store::{
     Auth0TokenResponse, access_token_cookie_max_age, post_auth0_token_form,
@@ -114,7 +114,9 @@ async fn auth0_callback_response_inner(req: Request, ctx: RouteContext<()>) -> R
                 config.auth0_email_claim
             ))
         })?;
-    if find_account_by_email(&db, &email).await?.is_none() {
+    // A pending account signs in too; the API then answers its requests
+    // with Mastodon's 403 "pending approval".
+    if find_account_id_holding_email(&db, &email).await?.is_none() {
         let mut response = access_authenticated_without_account_response(&config)?;
         clear_auth0_authorize_state_cookie(&mut response)?;
         return Ok(response);

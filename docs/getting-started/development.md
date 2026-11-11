@@ -74,7 +74,7 @@ GitHub Actions runs `web-ui` and `server` on separate runners in parallel. The a
 
 In GitHub Actions the `server` job installs Nix (`nixbuild/nix-quick-install-action`), restores the Nix store from the Actions cache (`nix-community/cache-nix-action`, keyed on `flake.nix`, `flake.lock`, and `rust-toolchain.toml`; only non-PR runs save or purge it), configures [nixbuild.net](../operations/nixbuild-net.md) when the `NIXBUILD_TOKEN` secret is set, loads the flake dev shell into later steps (`nicknovitski/nix-develop`), and then runs `just ci-server` and, outside pull requests, `just ci-wrangler-dry-run`.
 
-`ci-server` (PRs and `main`) is `cargo fmt --check`, native clippy `--all-targets`, wasm clippy, `cargo test --workspace`, and the Python `scripts/check_migrations.py`, `scripts/check_query_plans.py`, and `scripts/check_module_layers.py` checks. The GitHub `web-ui` job is `pnpm run check`, `pnpm test`, `pnpm run build`, plus `node --test scripts/lib/*.test.mjs`; the `just ci-web-ui` recipe omits that last step, so run it yourself after changing `scripts/lib/`. `wrangler deploy --dry-run` stays off pull requests.
+`ci-server` (PRs and `main`) is `cargo fmt --check`, native clippy `--all-targets`, wasm clippy, `cargo test --workspace`, and the Python `scripts/check_migrations.py`, `scripts/check_query_plans.py`, `scripts/check_module_layers.py`, and `scripts/check_pending_account_guard.py` checks. The GitHub `web-ui` job is `pnpm run check`, `pnpm test`, `pnpm run build`, plus `node --test scripts/lib/*.test.mjs`; the `just ci-web-ui` recipe omits that last step, so run it yourself after changing `scripts/lib/`. `wrangler deploy --dry-run` stays off pull requests.
 
 Jobs do not use path filters: a skipped `web-ui` or `server` is not `success`, so the aggregator would fail. Concurrent runs cancel in-progress work for the same pull request only; `main` is not cancelled.
 
@@ -83,7 +83,7 @@ Jobs do not use path filters: a skipped `web-ui` or `server` is not `success`, s
 `just ci` currently runs:
 
 - `ci-web-ui`: `pnpm install --frozen-lockfile`, `pnpm run check`, `pnpm test`, and `pnpm run build` in `web-ui`
-- `ci-server`: `cargo fmt --all --check`, `cargo clippy` native `--all-targets` and wasm32, `cargo test --workspace`, then `scripts/check_migrations.py`, `scripts/check_query_plans.py`, and `scripts/check_module_layers.py`
+- `ci-server`: `cargo fmt --all --check`, `cargo clippy` native `--all-targets` and wasm32, `cargo test --workspace`, then `scripts/check_migrations.py`, `scripts/check_query_plans.py`, `scripts/check_module_layers.py`, and `scripts/check_pending_account_guard.py`
 - `ci-wrangler-dry-run`: `WRANGLER_LOG=error wrangler deploy --dry-run`
 
 `admin-ui` has no CI job or tests; `npm run check` there runs `svelte-check` if you change it.

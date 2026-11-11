@@ -28,6 +28,7 @@ ci-server: fmt-check clippy test
     python3 scripts/check_migrations.py
     python3 scripts/check_query_plans.py
     python3 scripts/check_module_layers.py
+    python3 scripts/check_pending_account_guard.py
 
 ci-wrangler-dry-run:
     WRANGLER_LOG=error wrangler deploy --dry-run

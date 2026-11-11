@@ -2,6 +2,7 @@
 //! account without a row is approved.
 
 use crate::db_utils::d1_results;
+use crate::oauth_store::CredentialAccount;
 use crate::tracked_d1::{D1Database, D1PreparedStatement};
 use cfwdon_domain::{AccountApproval, LocalAccount, LocalAccountRecord};
 use serde::Deserialize;
@@ -80,19 +81,12 @@ pub(crate) async fn find_pending_account(
         .map(PendingAccount::from))
 }
 
-fn approval_from_pending(pending: bool) -> AccountApproval {
-    if pending {
-        AccountApproval::Pending
-    } else {
-        AccountApproval::Approved
-    }
-}
-
-/// The account an Auth0 identity signs in as, with its approval, in one read.
-pub(crate) async fn find_account_with_approval_by_email(
+/// The account an e-mail signs in as (an Auth0 identity or a password
+/// login), with its approval, in one read.
+pub(crate) async fn find_credential_account_by_email(
     db: &D1Database,
     email: &str,
-) -> Result<Option<(LocalAccount, AccountApproval)>> {
+) -> Result<Option<CredentialAccount>> {
     #[derive(Deserialize)]
     struct Row {
         #[serde(flatten)]
@@ -115,12 +109,26 @@ pub(crate) async fn find_account_with_approval_by_email(
         .bind_refs(&D1Type::Text(email))?
         .first::<Row>(None)
         .await?;
-    Ok(row.map(|row| {
-        (
-            LocalAccount::from_record(row.account),
-            approval_from_pending(row.pending_account_id.is_some()),
-        )
+    Ok(row.map(|row| CredentialAccount {
+        account: LocalAccount::from_record(row.account),
+        approval: if row.pending_account_id.is_some() {
+            AccountApproval::Pending
+        } else {
+            AccountApproval::Approved
+        },
     }))
+}
+
+/// The approved account holding `email`, for lookups that are not this
+/// request's credential (admin notification recipients).
+pub(crate) async fn find_approved_account_by_email(
+    db: &D1Database,
+    email: &str,
+) -> Result<Option<LocalAccount>> {
+    Ok(find_credential_account_by_email(db, email)
+        .await?
+        .filter(|credential| credential.approval == AccountApproval::Approved)
+        .map(|credential| credential.account))
 }
 
 /// The oldest pending accounts first, as Mastodon's admin queue lists them.

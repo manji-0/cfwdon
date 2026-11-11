@@ -34,17 +34,6 @@ impl AccessEmail {
     pub fn into_inner(self) -> String {
         self.0
     }
-
-    pub fn local_part(&self) -> &str {
-        self.0.split('@').next().unwrap_or("user")
-    }
-
-    pub fn short_suffix(&self) -> String {
-        let checksum = self.0.bytes().fold(0u32, |acc, byte| {
-            acc.wrapping_mul(16777619).wrapping_add(byte as u32)
-        });
-        format!("{:06x}", checksum & 0x00ff_ffff)
-    }
 }
 
 impl AsRef<str> for AccessEmail {

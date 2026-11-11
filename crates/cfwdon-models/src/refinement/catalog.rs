@@ -350,7 +350,7 @@ pub const REFINEMENT_CATALOG: &[RefinementEntry] = &[
                 model_action: "Validate",
                 domain_call: "sign_up_approval / ComposingRegistration::validate",
                 implementation_call: "create_account_placeholder_response / account_registration_api_details",
-                worker_guard: "registration form submitted; a blocked address is refused first",
+                worker_guard: "registration form submitted; closed registrations and a blocked address are refused first",
             },
             OperationMapping {
                 model_action: "Register",
@@ -375,32 +375,6 @@ pub const REFINEMENT_CATALOG: &[RefinementEntry] = &[
                 domain_call: "AccountApproval::review(Reject)",
                 implementation_call: "reject_pending_account",
                 worker_guard: "admin; account pending (conditional DELETE of the account)",
-            },
-        ],
-    },
-    RefinementEntry {
-        model: "access_provision",
-        domain_module: "cfwdon_domain::account::registration",
-        implementation_sites: &["crates/cfwdon-worker/src/auth/account_store.rs"],
-        abstraction: "OAuth email + username derivation",
-        operations: &[
-            OperationMapping {
-                model_action: "Resolve",
-                domain_call: "ComposingAccessProvision::resolve",
-                implementation_call: "resolve_local_account",
-                worker_guard: "authenticated user email not yet provisioned",
-            },
-            OperationMapping {
-                model_action: "Register",
-                domain_call: "AccessProvisionIntent::register",
-                implementation_call: "INSERT INTO accounts",
-                worker_guard: "resolved username and email",
-            },
-            OperationMapping {
-                model_action: "Provision",
-                domain_call: "RegisteringAccount::provision",
-                implementation_call: "store_account_private_key",
-                worker_guard: "account row inserted",
             },
         ],
     },

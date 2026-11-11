@@ -1,4 +1,6 @@
-use crate::auth::{LocalApiAuthentication, authenticate_local_api_request};
+use crate::auth::{
+    LocalApiAuthentication, authenticate_local_api_request, pending_approval_response,
+};
 use crate::db_session::bind_request_d1;
 use crate::identity::{actor_url, instance_base_url};
 use crate::oauth_apps::build_app_verify_credentials_document_from_row;
@@ -157,6 +159,7 @@ pub(crate) async fn oauth_userinfo_response(
         }
         LocalApiAuthentication::Auth0(account) => account,
         LocalApiAuthentication::None => return invalid_access_token_response(),
+        LocalApiAuthentication::PendingApproval(_) => return pending_approval_response(),
     };
     Response::from_json(&build_oauth_userinfo_document(&config, &account))
 }

@@ -199,7 +199,7 @@ pub(crate) fn check_registration_pipeline_refinement() {
         );
         assert_eq!(
             worker_stage == RegistrationStage::Refused,
-            state.ip == IpSignUpDecision::Blocked,
+            state.ip == IpSignUpDecision::Blocked || state.mode == RegistrationsMode::Closed,
             "refusal for {state:?}"
         );
 

@@ -1,4 +1,3 @@
-mod access_provision;
 mod activitypub_visibility;
 mod authorized_fetch;
 mod catalog;
@@ -22,7 +21,6 @@ pub use catalog::{OperationMapping, REFINEMENT_CATALOG, RefinementEntry};
 
 pub(crate) fn verify_refinements() {
     quote_approval::check_quote_approval_refinement();
-    access_provision::check_access_provision_refinement();
     registration::check_registration_refinement();
     registration_pipeline::check_registration_pipeline_refinement();
     status_draft::check_status_draft_refinement();
@@ -52,6 +50,6 @@ mod tests {
         assert!(names.contains(&"status_draft_transition_events"));
         assert!(names.contains(&"federation_dns_policy"));
         assert!(names.contains(&"authorized_fetch"));
-        assert_eq!(names.len(), 17);
+        assert_eq!(names.len(), 16);
     }
 }

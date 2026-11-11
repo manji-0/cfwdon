@@ -183,6 +183,10 @@ async fn authenticate_search_viewer(
         LocalApiAuthentication::AppToken | LocalApiAuthentication::InvalidBearer => {
             Err(search_error_response("The access token is invalid", 401))
         }
+        LocalApiAuthentication::PendingApproval(_) => Err(search_error_response(
+            "Your login is currently pending approval",
+            403,
+        )),
         LocalApiAuthentication::None => unauthenticated_search_viewer(plan),
     }
 }

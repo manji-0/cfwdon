@@ -1,4 +1,6 @@
-use crate::auth::{LocalApiAuthentication, authenticate_local_api_request};
+use crate::auth::{
+    LocalApiAuthentication, approved_credential_account, authenticate_local_api_request,
+};
 use crate::oauth_store::{
     OAuthAccessTokenRow, find_oauth_access_token_with_account_by_bearer_token,
     oauth_access_token_has_any_scope,
@@ -40,9 +42,9 @@ pub(super) async fn resolve_streaming_auth(
             }
             Ok(StreamingAuthOutcome::Viewer(Some(auth.account)))
         }
-        LocalApiAuthentication::AppToken | LocalApiAuthentication::InvalidBearer => {
-            Ok(StreamingAuthOutcome::InvalidToken)
-        }
+        LocalApiAuthentication::AppToken
+        | LocalApiAuthentication::InvalidBearer
+        | LocalApiAuthentication::PendingApproval(_) => Ok(StreamingAuthOutcome::InvalidToken),
         LocalApiAuthentication::None => {
             let token = query_access_token
                 .map(str::trim)
@@ -59,7 +61,15 @@ pub(super) async fn resolve_streaming_auth(
                     if !streaming_token_covers_channel(&auth.token, stream) {
                         return Ok(StreamingAuthOutcome::InvalidToken);
                     }
-                    Ok(StreamingAuthOutcome::Viewer(auth.account))
+                    // A pending account's token is refused, as in the
+                    // header form, never downgraded to an anonymous viewer.
+                    match auth.account {
+                        Some(credential) => Ok(approved_credential_account(Some(credential))
+                            .map_or(StreamingAuthOutcome::InvalidToken, |account| {
+                                StreamingAuthOutcome::Viewer(Some(account))
+                            })),
+                        None => Ok(StreamingAuthOutcome::Viewer(None)),
+                    }
                 }
                 None => Ok(StreamingAuthOutcome::Viewer(None)),
             }

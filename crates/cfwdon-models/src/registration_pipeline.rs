@@ -501,10 +501,23 @@ impl Model for RegistrationPipelineModel {
                 },
             ),
             Property::always(
-                "refused_only_for_a_blocked_address",
+                "refused_only_for_a_blocked_address_or_closed_registrations",
                 |_, state: &RegistrationPipelineModelState| {
                     state.stage != RegistrationStage::Refused
                         || state.ip == IpSignUpDecision::Blocked
+                        || state.mode == RegistrationsMode::Closed
+                },
+            ),
+            Property::always(
+                "closed_registrations_never_create_an_account",
+                |_, state: &RegistrationPipelineModelState| {
+                    state.mode != RegistrationsMode::Closed
+                        || !matches!(
+                            state.stage,
+                            RegistrationStage::Registered
+                                | RegistrationStage::Provisioned
+                                | RegistrationStage::Rejected
+                        )
                 },
             ),
             Property::always(

@@ -6,8 +6,8 @@ use super::{
     invalid_access_token_response, outside_authorized_scopes_response, validation_failed_response,
 };
 use crate::auth::{
-    find_account_by_email, find_account_by_username, hold_account_for_approval_statement,
-    store_account_private_key,
+    AccountLookup, find_account_by_username_with, find_account_id_holding_email,
+    find_approved_account_by_email, hold_account_for_approval_statement, store_account_private_key,
 };
 use crate::crypto_keys::generate_account_key_material;
 use crate::db_session::bind_request_d1;
@@ -22,9 +22,11 @@ use crate::oauth_store::{
 };
 use crate::push::send_push_notification;
 use crate::request_utils::parse_optional_bool;
-use crate::runtime_config::{load_config, registrations_mode};
+use crate::runtime_config::load_config;
 use crate::tracked_d1::D1Database;
-use cfwdon_domain::{AccountApproval, sign_up_approval};
+use cfwdon_domain::{
+    AccountApproval, SIGN_UP_REASON_MAX_CHARS, sign_up_approval, sign_up_reason_too_long,
+};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use worker::{Request, Response, Result, RouteContext, d1::D1Type};
@@ -77,14 +79,25 @@ fn account_registration_composing(
 fn account_registration_api_details(
     validation: &AccountRegistrationValidation,
     uniqueness: cfwdon_domain::RegistrationUniquenessFacts,
+    reason: Option<&str>,
 ) -> BTreeMap<&'static str, Vec<String>> {
-    match cfwdon_domain::finalize_registration_validation(
+    let mut details = match cfwdon_domain::finalize_registration_validation(
         account_registration_composing(validation).validate(),
         uniqueness,
     ) {
         Ok(_) => BTreeMap::new(),
         Err(errors) => errors.into_api_details(),
+    };
+    // Mastodon reports `invite_request.text` under `reason`.
+    if reason.is_some_and(sign_up_reason_too_long) {
+        details.insert(
+            "reason",
+            vec![format!(
+                "is too long (maximum is {SIGN_UP_REASON_MAX_CHARS} characters)"
+            )],
+        );
     }
+    details
 }
 
 async fn parse_account_registration_request(
@@ -185,7 +198,7 @@ async fn insert_registered_account(
     store_account_private_key(db, config, &id, &key_material.private_key_jwk).await?;
 
     for admin_email in &config.admin_emails {
-        if let Some(admin) = find_account_by_email(db, admin_email).await? {
+        if let Some(admin) = find_approved_account_by_email(db, admin_email).await? {
             let _ = send_push_notification(
                 db,
                 config,
@@ -219,7 +232,7 @@ pub(crate) async fn create_account_placeholder_response(
         return outside_authorized_scopes_response();
     }
     let Ok(approval) = sign_up_approval(
-        registrations_mode(&config),
+        config.registrations_mode,
         ip_sign_up_decision(&req, &db).await,
     ) else {
         return Ok(Response::from_json(
@@ -241,17 +254,20 @@ pub(crate) async fn create_account_placeholder_response(
     };
     let uniqueness = cfwdon_domain::RegistrationUniquenessFacts {
         username_taken: if let Some(username) = request.username.as_deref() {
-            find_account_by_username(&db, username).await?.is_some()
+            find_account_by_username_with(&db, username, AccountLookup::IncludingPending)
+                .await?
+                .is_some()
         } else {
             false
         },
         email_taken: if let Some(email) = request.email.as_deref() {
-            find_account_by_email(&db, email).await?.is_some()
+            find_account_id_holding_email(&db, email).await?.is_some()
         } else {
             false
         },
     };
-    let details = account_registration_api_details(&validation, uniqueness);
+    let details =
+        account_registration_api_details(&validation, uniqueness, request.reason.as_deref());
     if !details.is_empty() {
         return validation_failed_response(details);
     }
@@ -294,4 +310,31 @@ pub(crate) async fn create_account_placeholder_response(
         &access_token.access_token,
         &app_scopes.join(" "),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_reason_over_mastodons_limit_fails_validation() {
+        let validation = AccountRegistrationValidation {
+            username: Some("alice".to_owned()),
+            email: Some("alice@example.com".to_owned()),
+            password_present: true,
+            agreement: Some(true),
+        };
+        let details = |reason: &str| {
+            account_registration_api_details(
+                &validation,
+                cfwdon_domain::RegistrationUniquenessFacts::default(),
+                Some(reason),
+            )
+        };
+        assert!(details(&"a".repeat(SIGN_UP_REASON_MAX_CHARS)).is_empty());
+        assert_eq!(
+            details(&"a".repeat(SIGN_UP_REASON_MAX_CHARS + 1))["reason"],
+            ["is too long (maximum is 420 characters)"]
+        );
+    }
 }

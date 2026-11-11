@@ -180,7 +180,7 @@ Each value is one of `public`, `authenticated`, or `disabled`. Missing or invali
 
 | Var | Required | Default / Behavior | Notes |
 | --- | --- | --- | --- |
-| `REGISTRATIONS_MODE` | Optional | `open` | `approved` holds every `POST /api/v1/accounts` sign-up for an admin to approve, as Mastodon's `registrations_mode = approved` does, and sets `approval_required` in the instance documents. Any other value, `none` included, means `open`. IP blocks with `sign_up_requires_approval` hold sign-ups from their ranges in either mode. |
+| `REGISTRATIONS_MODE` | Optional | `open` | Mastodon's `registrations_mode`. `open` takes `POST /api/v1/accounts` sign-ups. `approved` holds each one for an admin to approve and sets `approval_required` in the instance documents. `none` refuses every sign-up with `403`, and the instance and NodeInfo documents report registrations as closed. Unset or blank means `open`. Any other value fails closed: the Worker logs an error and applies `approved`. IP blocks with `sign_up_requires_approval` hold sign-ups from their ranges in `open` mode too. |
 
 ## Logging Vars
 

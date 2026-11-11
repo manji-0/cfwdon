@@ -321,51 +321,6 @@ impl RegisteringAccount {
     }
 }
 
-/// OAuth/access-token driven account provisioning input.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ComposingAccessProvision {
-    pub email: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum AccessProvisionError {
-    #[error(transparent)]
-    Email(#[from] AccessEmailError),
-    #[error(transparent)]
-    Username(#[from] UsernameError),
-}
-
-impl ComposingAccessProvision {
-    pub fn resolve(
-        self,
-        base_username_taken: bool,
-    ) -> Result<AccessProvisionIntent, AccessProvisionError> {
-        let email = AccessEmail::parse(&self.email)?;
-        let username = Username::derive_from_email(&email, base_username_taken)?;
-        Ok(AccessProvisionIntent { email, username })
-    }
-}
-
-/// Resolved username for first-time access provisioning.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AccessProvisionIntent {
-    pub email: AccessEmail,
-    pub username: Username,
-}
-
-impl AccessProvisionIntent {
-    pub fn register(self, id: AccountId, keys: AccountKeyMaterial) -> RegisteringAccount {
-        let display_name = self.username.as_str().to_owned();
-        RegisteringAccount {
-            id,
-            username: self.username,
-            email: self.email,
-            display_name,
-            keys,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

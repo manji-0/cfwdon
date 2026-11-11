@@ -270,20 +270,26 @@ where
     set_auth0_config(&vars, &mut config);
     set_federation_retention_config(&vars, &mut config);
     config.authorized_fetch = parse_enabled_flag(vars("AUTHORIZED_FETCH"));
-    config.registrations_approval_required = vars("REGISTRATIONS_MODE")
-        .and_then(|value| RegistrationsMode::from_name(&value))
-        .unwrap_or_default()
-        .approval_required();
+    config.registrations_mode = registrations_mode_from_var(vars("REGISTRATIONS_MODE"));
 
     config
 }
 
-pub(crate) fn registrations_mode(config: &AppConfig) -> RegistrationsMode {
-    if config.registrations_approval_required {
-        RegistrationsMode::Approved
-    } else {
-        RegistrationsMode::Open
+/// Unset or blank means `open`. A value that names no mode (a typo of `none` or
+/// `approved`, say) fails closed to `approved`: sign-ups still work but wait
+/// for an admin, rather than opening an instance meant to be gated.
+fn registrations_mode_from_var(value: Option<String>) -> RegistrationsMode {
+    let Some(value) = value.filter(|value| !value.trim().is_empty()) else {
+        return RegistrationsMode::Open;
+    };
+    if let Some(mode) = RegistrationsMode::from_name(&value) {
+        return mode;
     }
+    #[cfg(target_arch = "wasm32")]
+    worker::console_error!(
+        "REGISTRATIONS_MODE={value:?} is not open, approved, or none; holding sign-ups for approval"
+    );
+    RegistrationsMode::Approved
 }
 
 /// `true`, `1`, `yes` and `on` (any case) turn a flag on; anything else is off.
@@ -592,19 +598,24 @@ mod tests {
     }
 
     #[test]
-    fn registrations_need_approval_only_in_approved_mode() {
-        assert!(!config_from_vars(|_| None).registrations_approval_required);
+    fn registrations_mode_is_open_by_default_and_fails_closed() {
+        assert_eq!(
+            config_from_vars(|_| None).registrations_mode,
+            RegistrationsMode::Open
+        );
         for (value, expected) in [
-            ("approved", true),
-            (" Approved ", true),
-            ("open", false),
-            ("none", false),
-            ("", false),
+            ("open", RegistrationsMode::Open),
+            ("approved", RegistrationsMode::Approved),
+            (" Approved ", RegistrationsMode::Approved),
+            ("none", RegistrationsMode::Closed),
+            ("closed", RegistrationsMode::Approved),
+            ("aproved", RegistrationsMode::Approved),
+            (" ", RegistrationsMode::Open),
         ] {
             let config =
                 config_from_vars(|key| (key == "REGISTRATIONS_MODE").then(|| value.to_owned()));
             assert_eq!(
-                config.registrations_approval_required, expected,
+                config.registrations_mode, expected,
                 "REGISTRATIONS_MODE={value:?}"
             );
         }

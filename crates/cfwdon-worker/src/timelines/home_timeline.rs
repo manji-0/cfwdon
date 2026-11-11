@@ -7,7 +7,9 @@ use super::{
     timeline_outside_authorized_scopes_response, timeline_response_from_entries,
 };
 use crate::app_cache::load_account_capabilities;
-use crate::auth::{LocalApiAuthentication, authenticate_local_api_request};
+use crate::auth::{
+    LocalApiAuthentication, authenticate_local_api_request, pending_approval_response,
+};
 use crate::db_session::{open_bound_request_session, with_d1_bookmark};
 use crate::filters::{AccountFilterMatcher, load_account_filter_matcher};
 use crate::home_timeline::{
@@ -49,6 +51,7 @@ pub(crate) async fn home_timeline_response(
         LocalApiAuthentication::AppToken
         | LocalApiAuthentication::InvalidBearer
         | LocalApiAuthentication::None => return timeline_invalid_access_token_response(),
+        LocalApiAuthentication::PendingApproval(_) => return pending_approval_response(),
     };
     if timeline_cursor_is_unresolved(&pagination, &cursor) {
         return with_d1_bookmark(empty_timeline_response()?, &session);

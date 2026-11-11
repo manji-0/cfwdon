@@ -1,7 +1,7 @@
 use crate::app_cache::{install_app_cache, reset_app_cache_request_state};
 use crate::auth::{
-    apply_auth0_web_session_cookies, oauth_scope_denied, oauth_scope_denied_response,
-    reset_auth0_web_session_state,
+    CredentialRefusal, apply_auth0_web_session_cookies, credential_refusal,
+    oauth_scope_denied_response, pending_approval_response,
 };
 use crate::d1_metrics::reset_d1_request_metrics;
 use crate::deferred::defer;
@@ -9,7 +9,6 @@ use crate::delivery::kick_outbox_process_queue_after_request;
 use crate::federation::{install_domain_suspensions, install_remote_dns_cache};
 use crate::http::install_secure_mode_fetch_signing;
 use crate::ip_blocks::ip_access_denied_response;
-use crate::oauth_store::{credential_pending_approval, pending_approval_response};
 use crate::rate_limit::{RateLimitGate, apply_rate_limit_headers, enforce_rate_limits};
 use crate::response_utils::into_mutable_response;
 use crate::routing::{
@@ -24,7 +23,6 @@ use worker::{Env, Request, Response, Result, console_error};
 pub(crate) async fn handle_fetch(req: Request, env: Env) -> Result<Response> {
     reset_d1_request_metrics();
     reset_app_cache_request_state();
-    reset_auth0_web_session_state();
     let config = load_config_from_env(&env);
     install_remote_dns_cache(&env, &config.remote_dns_cache_binding);
     install_app_cache(&env, &config.app_cache_binding);
@@ -62,13 +60,13 @@ pub(crate) async fn handle_fetch(req: Request, env: Env) -> Result<Response> {
     let response = match dispatch_route(req, env, dispatch_method, &path).await {
         Ok(response) => {
             // Durable Object / ASSETS / Cache API responses are immutable.
-            let refused_api_credential = response.status_code() == 401 && path.starts_with("/api/");
-            let mut response = if refused_api_credential && credential_pending_approval() {
-                pending_approval_response()?
-            } else if refused_api_credential && oauth_scope_denied() {
-                oauth_scope_denied_response()?
-            } else {
-                into_mutable_response(response)?
+            let refusal = (response.status_code() == 401 && path.starts_with("/api/"))
+                .then(credential_refusal)
+                .flatten();
+            let mut response = match refusal {
+                Some(CredentialRefusal::PendingApproval) => pending_approval_response()?,
+                Some(CredentialRefusal::ScopeDenied) => oauth_scope_denied_response()?,
+                None => into_mutable_response(response)?,
             };
             if let Some(headline) = &rate_limit {
                 apply_rate_limit_headers(&mut response, headline)?;

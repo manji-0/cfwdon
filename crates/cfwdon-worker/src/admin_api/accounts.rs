@@ -5,10 +5,11 @@
 use super::guard::{AdminAuthorization, authorize_admin_request};
 use super::mastodon_admin::admin_record_not_found;
 use crate::auth::{
-    PendingAccount, approve_pending_account, find_account_by_id, find_pending_account,
-    list_pending_accounts, reject_pending_account,
+    AccountLookup, PendingAccount, approve_pending_account, find_account_by_id_with,
+    find_pending_account, list_pending_accounts, reject_pending_account,
 };
 use crate::db_session::bind_request_d1;
+use crate::response_cache::invalidate_account_public_cache;
 use crate::responses::MastodonAccountResponse;
 use crate::runtime_config::load_config;
 use crate::time_html::timestamp_to_mastodon_iso8601;
@@ -111,7 +112,9 @@ async fn review_account_response(
     };
     let config = load_config(&ctx);
     let db = bind_request_d1(&ctx, &config)?;
-    let Some(account) = find_account_by_id(&db, &account_id).await? else {
+    let Some(account) =
+        find_account_by_id_with(&db, &account_id, AccountLookup::IncludingPending).await?
+    else {
         return admin_record_not_found();
     };
     let pending = find_pending_account(&db, account.id()).await?;
@@ -137,6 +140,9 @@ async fn review_account_response(
             if !reject_pending_account(&db, account.id()).await? {
                 return review_not_allowed();
             }
+            // The username can sign up again; no cached document may outlive
+            // the account (in this colo; elsewhere it expires with its TTL).
+            invalidate_account_public_cache(&ctx, account.id(), account.username()).await;
             Response::from_json(&serde_json::json!({}))
         }
     }

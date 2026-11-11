@@ -1,8 +1,8 @@
 use crate::oauth_store::{
-    credential_pending_approval, oauth_access_token_auth_from_joined_row,
-    oauth_access_token_has_any_scope_json, parse_bearer_authorization_header,
-    reset_credential_pending_approval,
+    oauth_access_token_auth_from_joined_row, oauth_access_token_has_any_scope_json,
+    parse_bearer_authorization_header,
 };
+use cfwdon_domain::AccountApproval;
 
 #[test]
 fn parse_bearer_authorization_header_extracts_bearer_value() {
@@ -62,22 +62,17 @@ fn joined_token_row(pending_account_id: Option<&str>) -> serde_json::Value {
 }
 
 #[test]
-fn a_pending_accounts_token_authorizes_no_account() {
-    reset_credential_pending_approval();
-    let approved = oauth_access_token_auth_from_joined_row(joined_token_row(None))
-        .unwrap()
-        .unwrap();
-    assert_eq!(
-        approved.account.map(|account| account.id().to_owned()),
-        Some("acct-1".to_owned())
-    );
-    assert!(!credential_pending_approval());
-
-    let pending = oauth_access_token_auth_from_joined_row(joined_token_row(Some("acct-1")))
-        .unwrap()
-        .unwrap();
-    assert!(pending.account.is_none());
-    assert!(credential_pending_approval());
-    reset_credential_pending_approval();
-    assert!(!credential_pending_approval());
+fn a_tokens_account_carries_its_approval() {
+    for (pending_account_id, expected) in [
+        (None, AccountApproval::Approved),
+        (Some("acct-1"), AccountApproval::Pending),
+    ] {
+        let owner = oauth_access_token_auth_from_joined_row(joined_token_row(pending_account_id))
+            .unwrap()
+            .unwrap()
+            .account
+            .unwrap();
+        assert_eq!(owner.account.id(), "acct-1");
+        assert_eq!(owner.approval, expected);
+    }
 }

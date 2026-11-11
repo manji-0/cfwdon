@@ -483,6 +483,26 @@ def main() -> int:
             "a,p",
         ),
         (
+            "public account lookup by id skips pending accounts by key",
+            """SELECT id FROM accounts
+               WHERE id = ?1 AND NOT EXISTS (
+                   SELECT 1 FROM pending_account_approvals p WHERE p.account_id = accounts.id
+               )
+               LIMIT 1""",
+            ("acct-1",),
+            "accounts,p",
+        ),
+        (
+            "public account lookup by username skips pending accounts by key",
+            """SELECT id FROM accounts
+               WHERE username = ?1 AND NOT EXISTS (
+                   SELECT 1 FROM pending_account_approvals p WHERE p.account_id = accounts.id
+               )
+               LIMIT 1""",
+            ("alice",),
+            "accounts,p",
+        ),
+        (
             "silenced authors the viewer follows",
             """SELECT target_actor_uri
                FROM follows
