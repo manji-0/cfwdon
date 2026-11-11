@@ -267,8 +267,24 @@ where
 
     set_content_config(&vars, &mut config);
     set_auth0_config(&vars, &mut config);
+    set_federation_retention_config(&vars, &mut config);
 
     config
+}
+
+fn set_federation_retention_config(vars: &impl Fn(&str) -> Option<String>, config: &mut AppConfig) {
+    if let Some(days) = parse_retention_days(vars("FEDERATION_ACTIVITY_RETENTION_DAYS")) {
+        config.federation_activity_retention_days = days;
+    }
+}
+
+/// `Some(None)` turns pruning off (`0`), `Some(Some(days))` sets a window,
+/// and `None` keeps the default for a blank or unparseable value.
+fn parse_retention_days(value: Option<String>) -> Option<Option<u32>> {
+    match trimmed_non_empty(value.as_deref())?.parse::<u32>().ok()? {
+        0 => Some(None),
+        days => Some(Some(days)),
+    }
 }
 
 fn set_secret_storage_config(vars: &impl Fn(&str) -> Option<String>, config: &mut AppConfig) {
@@ -532,6 +548,23 @@ mod tests {
             parse_timeline_access_level(Some("private".to_owned())),
             None
         );
+    }
+
+    #[test]
+    fn federation_activity_retention_days_parses_window_off_and_default() {
+        let retention = |value: Option<&str>| {
+            config_from_vars(|key| {
+                (key == "FEDERATION_ACTIVITY_RETENTION_DAYS")
+                    .then(|| value.map(ToOwned::to_owned))
+                    .flatten()
+            })
+            .federation_activity_retention_days
+        };
+        assert_eq!(retention(None), Some(30));
+        assert_eq!(retention(Some(" 7 ")), Some(7));
+        assert_eq!(retention(Some("0")), None);
+        assert_eq!(retention(Some("thirty")), Some(30));
+        assert_eq!(retention(Some("-1")), Some(30));
     }
 
     #[test]
