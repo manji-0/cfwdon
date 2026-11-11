@@ -2,6 +2,7 @@
   import Dashboard from "./pages/Dashboard.svelte";
   import Deliveries from "./pages/Deliveries.svelte";
   import DomainBlocks from "./pages/DomainBlocks.svelte";
+  import IpBlocks from "./pages/IpBlocks.svelte";
   import Emojis from "./pages/Emojis.svelte";
   import Relays from "./pages/Relays.svelte";
   import Reports from "./pages/Reports.svelte";
@@ -87,6 +88,8 @@
         <Relays />
       {:else if $page === "domain-blocks"}
         <DomainBlocks />
+      {:else if $page === "ip-blocks"}
+        <IpBlocks />
       {:else if $page === "system"}
         <System />
       {:else}

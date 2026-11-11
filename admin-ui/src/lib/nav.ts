@@ -7,6 +7,7 @@ export type Page =
   | "deliveries"
   | "relays"
   | "domain-blocks"
+  | "ip-blocks"
   | "system";
 
 export type NavItem = Readonly<{ page: Page; href: string; label: string }>;
@@ -18,6 +19,7 @@ export const navItems: ReadonlyArray<NavItem> = [
   { page: "deliveries", href: "/admin/deliveries", label: "配信キュー" },
   { page: "relays", href: "/admin/relays", label: "リレー" },
   { page: "domain-blocks", href: "/admin/domain-blocks", label: "ドメインブロック" },
+  { page: "ip-blocks", href: "/admin/ip-blocks", label: "IPブロック" },
   { page: "system", href: "/admin/system", label: "システム" },
 ];
 

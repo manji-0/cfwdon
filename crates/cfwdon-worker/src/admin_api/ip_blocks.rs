@@ -1,4 +1,5 @@
-//! Mastodon's `/api/v1/admin/ip_blocks` (`Api::V1::Admin::IpBlocksController`).
+//! Mastodon's `/api/v1/admin/ip_blocks` (`Api::V1::Admin::IpBlocksController`)
+//! and the admin UI's `/api/cfwdon/admin/ip-blocks`, which share these handlers.
 
 use super::guard::{AdminAuthorization, authorize_admin_request};
 use super::mastodon_admin::{
