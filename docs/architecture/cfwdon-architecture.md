@@ -130,7 +130,7 @@ Admins add instance domain blocks through `/api/cfwdon/admin/domain-blocks`. Eac
 - Use `INSTANCE_*`, `SOURCE_URL`, language, contact, thumbnail, policy, and media vars for public instance metadata.
 - Keep `MEDIA_PUBLIC_BASE_URL` on a public media domain.
 - Protect user and internal routes with Auth0 settings where required.
-- Two cron triggers run maintenance: hourly (outbox queue kick, expired polls, scheduled statuses, background jobs such as card unfurls, stale inbox reclaim, remote content retention, federation activity retention, cache refresh) and every six hours (trending tags and statuses). Orphaned media is pruned through `POST /internal/media/prune-orphans`, not cron.
+- Two cron triggers run maintenance: hourly (outbox queue kick, expired polls, scheduled statuses, background jobs such as card unfurls, stale inbox reclaim, remote content retention, federation activity retention, the stored media metadata backfill, cache refresh) and every six hours (trending tags and statuses). Orphaned media is pruned through `POST /internal/media/prune-orphans`, not cron.
 
 ## Observability
 
@@ -153,6 +153,26 @@ Admins add instance domain blocks through `/api/cfwdon/admin/domain-blocks`. Eac
 - Validate incoming ActivityPub signatures, dates, and digests fail-closed for signed inbox traffic.
 - Maintain DNS-based SSRF checks for remote resolution paths.
 - Treat private/direct status visibility as a cross-cutting data access concern.
+- Strip location and device metadata from user media before it is stored, as described in [Media Metadata Stripping](#media-metadata-stripping).
+
+### Media Metadata Stripping
+
+Cameras and phones write the GPS position, device, owner, and capture time into photos and videos. Mastodon removes them by re-encoding with libvips and ffmpeg. A Worker has neither, so `cfwdon_domain::media_metadata` rewrites the container losslessly. It decodes no pixels or samples, and its time is linear in the file size.
+
+| Container | Removed | Kept |
+| --- | --- | --- |
+| JPEG | APP1 EXIF and XMP, APP13 IPTC, other APPn, comments, bytes after EOI | JFIF, ICC profile, Adobe marker, image data, a non-default EXIF orientation |
+| PNG | `tEXt`, `zTXt`, `iTXt`, `tIME`, `eXIf`, private chunks | critical, colour, and animation chunks, a non-default orientation |
+| WebP | `EXIF`, `XMP `, and unknown chunks; the VP8X flags and RIFF size are corrected | `ICCP`, `ALPH`, `ANIM`, `ANMF`, image data, a non-default orientation |
+| HEIF (AVIF, HEIC) | EXIF and XMP items, overwritten in place | everything else, including `irot` and `imir` |
+| MP4, MOV | `udta`, `meta`, `XMP_`, `prft`, metadata `uuid` boxes, and timed metadata tracks such as GoPro GPS, replaced by `free` boxes of the same size; `mvhd`, `tkhd`, and `mdhd` times are zeroed | sample data and every offset |
+| WebM, Matroska | `Tags`, `Attachments`, title, date, file names, segment UIDs, and track names, replaced by `Void` elements of the same size | clusters, cues, chapters, muxing and writing app |
+
+The orientation goes back in as a new EXIF block that holds only that tag, so a rotated phone photo still displays upright.
+
+Every path that stores user media calls `strip_upload_metadata` before the R2 put: media attachments, avatars and headers, and custom emoji. The bytes decide the container, not the declared type. The upload is refused with 422 when the file is damaged, when a declared image or video type does not match the bytes, or when the file is TIFF, which is EXIF throughout. GIF, audio, and other formats without a stripper are stored as uploaded.
+
+Objects stored before stripping existed are queued once in `media_metadata_backfill` by migration `127`. The hourly cron rewrites up to 25 of them, or 64 MiB, per run with a conditional put on the object's etag, then deletes their rows. Objects over 32 MiB and files that cannot be parsed stay as they are and are logged as `media_metadata_backfill` events with the outcome `too_large` or `unreadable`. Copies already cached by the media domain or by browsers keep their old bytes until they expire or are purged; see [Stripping Metadata From Stored Media](../operations/cloudflare-deploy.md#stripping-metadata-from-stored-media).
 
 ## Rollout History
 

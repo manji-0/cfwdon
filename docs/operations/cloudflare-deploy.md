@@ -162,6 +162,17 @@ D1 cannot change location, so moving means a new database and a copy. With about
 6. Point `database_name` / `database_id` and `[placement] region` at the new database and `wrangler deploy` without the variable.
 7. Re-enable read replication on the new database in the dashboard if it was on, and keep the old database until the move is settled.
 
+## Stripping Metadata From Stored Media
+<!-- constrained-by ../architecture/cfwdon-architecture.md#media-metadata-stripping -->
+
+Uploads are stripped of EXIF, GPS, XMP, and video location tags before they reach R2. Objects stored by an earlier release still carry them. Migration `127_media_metadata_backfill.sql` queues every stored media attachment, avatar, header, and custom emoji, and the hourly cron rewrites them in place. No action is needed to start it.
+
+1. Apply the migration with the deploy, as for any other migration.
+2. Watch the `media_metadata_backfill` log events. The outcome is `stripped`, `unchanged`, `missing`, `unreadable`, `too_large`, or `deferred`. A `deferred` object stays queued for the next run.
+3. Check the queue with `wrangler d1 execute DB --remote --command "SELECT COUNT(*) FROM media_metadata_backfill"`. The backfill is done when the count is 0.
+4. Decide what to do with each `too_large` object (over 32 MiB) and each `unreadable` object. Both still carry their metadata. Delete them, or replace them by hand.
+5. Purge the media hostname from the Cloudflare cache. The `/media/:id` fallback route serves objects with `Cache-Control: public, max-age=31536000, immutable`, and the media domain caches them under its Cache Rules, so cached copies keep the old bytes until they are purged. Browsers and remote servers that already fetched a file keep their copies.
+
 ## Stream Hub hibernation exceptions
 <!-- derived-from #provisioning-steps -->
 
