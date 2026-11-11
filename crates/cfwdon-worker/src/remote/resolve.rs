@@ -3,10 +3,9 @@ use crate::activitypub::{
     activity_object_id, extract_remote_note_object, is_public_activitypub_visibility,
     local_username_from_actor_uri, visibility_from_activitypub_object,
 };
-use crate::auth::{find_account_by_id, find_account_by_username, find_any_local_account};
+use crate::auth::{find_account_by_id, find_account_by_username};
 use crate::federation::{
-    ensure_remote_actor_username_matches_handle, fetch_remote_activitypub_document,
-    parse_remote_http_url, resolve_webfinger_actor_uri,
+    ensure_remote_actor_username_matches_handle, parse_remote_http_url, resolve_webfinger_actor_uri,
 };
 use crate::http::fetch_signed_activitypub_document;
 use crate::identity::{parse_lookup_handle, remote_actor_uri_from_rest_id};
@@ -95,24 +94,22 @@ async fn materialize_remote_account_reference(
         .map(AccountReference::Remote))
 }
 
-pub(crate) async fn resolve_lookup_account_with_viewer(
+pub(crate) async fn resolve_lookup_account(
     db: &D1Database,
     config: &AppConfig,
     acct: &str,
-    viewer: Option<&LocalAccount>,
 ) -> Result<MastodonAccountResponse> {
-    resolve_lookup_account_with_fetch_state(db, config, acct, viewer)
+    resolve_lookup_account_with_fetch_state(db, config, acct)
         .await
         .map(|(response, _)| response)
 }
 
-/// Like [`resolve_lookup_account_with_viewer`], also returning the actor URI
+/// Like [`resolve_lookup_account`], also returning the actor URI
 /// when the response comes from a fresh origin fetch (worth caching).
 pub(crate) async fn resolve_lookup_account_with_fetch_state(
     db: &D1Database,
     config: &AppConfig,
     acct: &str,
-    viewer: Option<&LocalAccount>,
 ) -> Result<(MastodonAccountResponse, Option<String>)> {
     let handle = parse_lookup_handle(acct, config)?;
     if handle.is_local_to(&config.instance_domain) {
@@ -130,7 +127,7 @@ pub(crate) async fn resolve_lookup_account_with_fetch_state(
         .domain
         .as_deref()
         .ok_or_else(|| Error::RustError("remote handle is missing domain".to_owned()))?;
-    let fetch_context = RemoteCollectionFetchContext::public(config, db, viewer);
+    let fetch_context = RemoteCollectionFetchContext::public(config, db);
     match resolve_remote_lookup_via_fetch(db, &handle, &fetch_context).await {
         Ok((response, actor_uri)) => Ok((response, Some(actor_uri))),
         Err(error) => {
@@ -193,22 +190,13 @@ pub(crate) async fn resolve_search_account(
     config: &AppConfig,
     query: &str,
 ) -> Result<Option<MastodonAccountResponse>> {
-    resolve_search_account_with_viewer(db, config, query, None).await
-}
-
-pub(crate) async fn resolve_search_account_with_viewer(
-    db: &D1Database,
-    config: &AppConfig,
-    query: &str,
-    viewer: Option<&LocalAccount>,
-) -> Result<Option<MastodonAccountResponse>> {
     let query = query.trim();
     if query.is_empty() {
         return Ok(None);
     }
 
     if account_search_is_complete_handle(query, config)
-        && let Ok(account) = resolve_lookup_account_with_viewer(db, config, query, viewer).await
+        && let Ok(account) = resolve_lookup_account(db, config, query).await
     {
         return Ok(Some(account));
     }
@@ -241,7 +229,7 @@ pub(crate) async fn resolve_search_account_with_viewer(
         return Ok(Some(response));
     }
 
-    let fetch_context = RemoteCollectionFetchContext::public(config, db, viewer);
+    let fetch_context = RemoteCollectionFetchContext::public(config, db);
     let fetched = match fetch_remote_actor_profile_with_context(query, Some(&fetch_context)).await {
         Ok(fetched) => fetched,
         Err(_) => return Ok(None),
@@ -267,7 +255,6 @@ pub(crate) async fn resolve_remote_status_by_url(
     db: &D1Database,
     config: &AppConfig,
     url: &str,
-    viewer: Option<&LocalAccount>,
 ) -> Result<Option<(RemoteStatus, RemoteActorRow)>> {
     if let Some(status) = find_remote_status_by_url_or_object_uri(db, url).await? {
         let Some(actor) = find_remote_actor_by_actor_uri(db, &status.actor_uri).await? else {
@@ -277,51 +264,23 @@ pub(crate) async fn resolve_remote_status_by_url(
     }
 
     let fetch_url = parse_remote_http_url(url)?;
-    // Prefer signed GET without unsigned fallback: authorized_fetch hosts reject
+    // Signed GET without unsigned fallback: authorized_fetch hosts reject
     // unsigned Note GETs with 401, and falling back only hides the signed error.
-    let fallback_signer = if viewer.is_some() {
-        None
-    } else {
-        find_any_local_account(db).await?
-    };
-    let signer = viewer.or(fallback_signer.as_ref());
-    let document = match signer {
-        Some(account) => {
-            match fetch_signed_activitypub_document(config, db, account, fetch_url.as_str()).await {
-                Ok(document) => document,
-                Err(error) => {
-                    let message = error.to_string();
-                    log_json_event(serde_json::json!({
-                        "event": "resolve_remote_status_fetch_failed",
-                        "url": url,
-                        "signer": account.username(),
-                        "mode": "signed",
-                        "error": message,
-                    }));
-                    return Err(Error::RustError(format!(
-                        "resolve_remote_status signed fetch failed for {url}: {message}"
-                    )));
-                }
-            }
+    let document = match fetch_signed_activitypub_document(config, db, fetch_url.as_str()).await {
+        Ok(document) => document,
+        Err(error) => {
+            let message = error.to_string();
+            log_json_event(serde_json::json!({
+                "event": "resolve_remote_status_fetch_failed",
+                "url": url,
+                "error": message,
+            }));
+            return Err(Error::RustError(format!(
+                "resolve_remote_status signed fetch failed for {url}: {message}"
+            )));
         }
-        None => match fetch_remote_activitypub_document(fetch_url.as_str()).await {
-            Ok(document) => document,
-            Err(error) => {
-                let message = error.to_string();
-                log_json_event(serde_json::json!({
-                    "event": "resolve_remote_status_fetch_failed",
-                    "url": url,
-                    "signer": serde_json::Value::Null,
-                    "mode": "unsigned",
-                    "error": message,
-                }));
-                return Err(Error::RustError(format!(
-                    "resolve_remote_status fetch failed for {url}: {message}"
-                )));
-            }
-        },
     };
-    let fetch_context = RemoteCollectionFetchContext::authorized(config, db, signer);
+    let fetch_context = RemoteCollectionFetchContext::authorized(config, db);
     let Some(object) = extract_remote_note_object(&document) else {
         log_json_event(serde_json::json!({
             "event": "resolve_remote_status_no_note",

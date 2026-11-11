@@ -2,7 +2,7 @@ use crate::activitypub::{
     activitypub_audiences_for_visibility, activitypub_media_attachment_type,
     build_accept_quote_request_activity_with_id, build_activitypub_actor_document,
     build_add_featured_activity_with_id, build_delete_quote_authorization_activity,
-    build_quote_authorization_object, build_quote_request_object,
+    build_instance_actor_document, build_quote_authorization_object, build_quote_request_object,
     build_reject_quote_request_activity_with_id, build_remove_featured_activity_with_id,
     build_status_update_activity_with_id, build_update_person_activity_with_id,
     extract_inbox_target_username, extract_remote_note_object, follow_targets_local_actor,
@@ -743,6 +743,41 @@ fn activitypub_actor_document_reflects_locked_and_bot_flags() {
     assert_eq!(actor.actor_type, "Service");
     assert!(actor.manually_approves_followers);
     assert_eq!(actor.webfinger, "alice@social.example");
+}
+
+#[test]
+fn instance_actor_document_is_an_application_named_after_the_domain() {
+    let config = AppConfig::new("https://social.example", "cfwdon", "test instance");
+    let document =
+        serde_json::to_value(build_instance_actor_document(&config, "PUBLIC KEY")).unwrap();
+
+    assert_eq!(document["id"], "https://social.example/actor");
+    assert_eq!(document["type"], "Application");
+    assert_eq!(document["preferredUsername"], "social.example");
+    assert_eq!(document["inbox"], "https://social.example/actor/inbox");
+    assert_eq!(document["outbox"], "https://social.example/actor/outbox");
+    assert_eq!(
+        document["endpoints"]["sharedInbox"],
+        "https://social.example/inbox"
+    );
+    assert_eq!(
+        document["publicKey"]["id"],
+        crate::identity::instance_actor_key_id(&config)
+    );
+    assert_eq!(
+        document["publicKey"]["id"],
+        "https://social.example/actor#main-key"
+    );
+    assert_eq!(
+        document["publicKey"]["owner"],
+        "https://social.example/actor"
+    );
+    assert_eq!(document["publicKey"]["publicKeyPem"], "PUBLIC KEY");
+    assert!(cfwdon_domain::activitypub_key_id_matches_actor(
+        document["publicKey"]["id"].as_str().unwrap(),
+        document["id"].as_str().unwrap(),
+        document["id"].as_str().unwrap(),
+    ));
 }
 
 #[test]

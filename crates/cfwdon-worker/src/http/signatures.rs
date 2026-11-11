@@ -1,4 +1,4 @@
-use super::load_account_signing_key;
+use super::load_instance_actor_signing_key;
 use super::{
     build_signature_signing_string, build_signature_signing_string_from_parts,
     cached_remote_actor_matches_key, extract_activity_actor_uri, now_http_date_string,
@@ -12,11 +12,11 @@ use crate::federation::{
     parse_remote_http_json_response, parse_remote_http_url, resolve_remote_redirect_location,
     validate_remote_fetch_url,
 };
-use crate::identity::public_key_id;
+use crate::identity::instance_actor_key_id;
 use crate::store::remote::{find_cached_remote_actor_profile_by_actor_uri, upsert_remote_actor};
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
-use cfwdon_domain::{LocalAccount, activitypub_key_id_matches_actor};
+use cfwdon_domain::activitypub_key_id_matches_actor;
 use worker::{Error, Fetch, Headers, Method, Request, RequestInit, RequestRedirect, Result};
 const MAX_SIGNED_REMOTE_FETCH_REDIRECTS: usize = 5;
 pub(super) const ACTIVITYPUB_ACCEPT: &str = "application/activity+json, application/ld+json; profile=\"https://www.w3.org/ns/activitystreams\"";
@@ -48,16 +48,16 @@ pub(crate) fn signed_post_signing_string(
     )
 }
 
+/// Signed GET as the instance actor (`/actor#main-key`), as Mastodon signs
+/// the fetches it makes on the server's behalf: servers in secure mode answer
+/// it, and no local user's identity is attached to the request.
 pub(crate) async fn fetch_signed_activitypub_document(
     config: &AppConfig,
     db: &D1Database,
-    account: &LocalAccount,
     url: &str,
 ) -> Result<serde_json::Value> {
-    let signing_key = load_account_signing_key(db, config, account.id())
-        .await?
-        .ok_or_else(|| Error::RustError("account private signing key is missing".to_owned()))?;
-    let key_id = public_key_id(config, account.username());
+    let signing_key = load_instance_actor_signing_key(db, config).await?;
+    let key_id = instance_actor_key_id(config);
     let mut current_url = parse_remote_http_url(url)?;
     validate_remote_fetch_url(&current_url).await?;
 

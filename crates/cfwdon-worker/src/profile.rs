@@ -107,7 +107,7 @@ struct AccountPreferencesSubject {
     settings: AccountProfileSettings,
 }
 
-pub(crate) async fn account_response(req: Request, ctx: RouteContext<()>) -> Result<Response> {
+pub(crate) async fn account_response(ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
     let account_id = ctx
         .param("id")
@@ -123,8 +123,7 @@ pub(crate) async fn account_response(req: Request, ctx: RouteContext<()>) -> Res
     {
         return Ok(response);
     }
-    let viewer = find_authenticated_local_account(&req, &db, &config).await?;
-    let fetch_context = RemoteCollectionFetchContext::public(&config, &db, viewer.as_ref());
+    let fetch_context = RemoteCollectionFetchContext::public(&config, &db);
     match resolve_account_reference_with_fetch(&db, &account_id, Some(&fetch_context)).await? {
         Some(AccountReference::Local(account)) => {
             let (stats, settings, config) = futures_util::try_join!(
@@ -160,8 +159,7 @@ pub(crate) async fn account_response(req: Request, ctx: RouteContext<()>) -> Res
             {
                 return Ok(response);
             }
-            let (response, fetched) =
-                remote_account_response(&db, &config, &actor, viewer.as_ref()).await?;
+            let (response, fetched) = remote_account_response(&db, &config, &actor).await?;
             // Only a fresh origin fetch is worth caching; the stored-row fallback
             // should retry the origin on the next view.
             if fetched {
@@ -177,9 +175,8 @@ async fn remote_account_response(
     db: &D1Database,
     config: &AppConfig,
     actor: &RemoteActorRow,
-    viewer: Option<&LocalAccount>,
 ) -> Result<(MastodonAccountResponse, bool)> {
-    let fetch_context = RemoteCollectionFetchContext::public(config, db, viewer);
+    let fetch_context = RemoteCollectionFetchContext::public(config, db);
     let fetched =
         match fetch_remote_actor_profile_with_context(&actor.actor_uri, Some(&fetch_context)).await
         {
@@ -229,9 +226,6 @@ fn account_api_cache_candidate(account_id: &str) -> bool {
 pub(crate) async fn account_lookup(req: Request, ctx: RouteContext<()>) -> Result<Response> {
     let config = load_config(&ctx);
     let db = bind_request_d1(&ctx, &config)?;
-    // Mastodon allows unauthenticated lookup; auth is optional and only used for
-    // signed remote fetches / richer relationship context when present.
-    let viewer = find_authenticated_local_account(&req, &db, &config).await?;
 
     let query: AccountLookupQuery = req.query()?;
     let Some(acct) = query
@@ -253,7 +247,7 @@ pub(crate) async fn account_lookup(req: Request, ctx: RouteContext<()>) -> Resul
     {
         return Ok(response);
     }
-    match resolve_lookup_account_with_fetch_state(&db, &config, &acct, viewer.as_ref()).await {
+    match resolve_lookup_account_with_fetch_state(&db, &config, &acct).await {
         Ok((account, fetched_actor_uri)) => {
             if let Some(actor_uri) = fetched_actor_uri {
                 cache_remote_account_api_response(&config, &actor_uri, &account).await?;

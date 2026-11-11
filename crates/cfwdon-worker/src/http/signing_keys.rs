@@ -1,9 +1,11 @@
-//! Account signing keys for outbound HTTP signatures. Loading one reads the
-//! encrypted JWK from D1, decrypts it and imports it, so deliveries reuse the
-//! imported key (non-extractable) within an isolate for a few minutes.
+//! Signing keys for outbound HTTP signatures (accounts and the instance actor).
+//! Loading one reads the encrypted JWK from D1, decrypts it and imports it, so
+//! deliveries and fetches reuse the imported key (non-extractable) within an
+//! isolate for a few minutes.
 
 use super::import_account_signing_key;
 use crate::auth::load_account_private_key_jwk;
+use crate::store::instance_actor::instance_actor_keys;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use std::cell::RefCell;
@@ -13,6 +15,8 @@ use worker::Result;
 
 const ACCOUNT_SIGNING_KEY_L1_TTL_MS: f64 = 5.0 * 60_000.0;
 const ACCOUNT_SIGNING_KEY_L1_MAX_ENTRIES: usize = 64;
+/// Cache slot for the instance actor; account ids are hex, so it cannot collide.
+const INSTANCE_ACTOR_L1_SLOT: &str = "instance-actor";
 
 thread_local! {
     static ACCOUNT_SIGNING_KEY_L1: RefCell<HashMap<String, (CryptoKey, f64)>> =
@@ -58,4 +62,18 @@ pub(crate) async fn load_account_signing_key(
     let key = import_account_signing_key(&private_key_jwk).await?;
     l1_put(account_id, key.clone(), now_ms);
     Ok(Some(key))
+}
+
+pub(crate) async fn load_instance_actor_signing_key(
+    db: &D1Database,
+    config: &AppConfig,
+) -> Result<CryptoKey> {
+    let now_ms = js_sys::Date::now();
+    if let Some(key) = l1_get(INSTANCE_ACTOR_L1_SLOT, now_ms) {
+        return Ok(key);
+    }
+    let keys = instance_actor_keys(db, config).await?;
+    let key = import_account_signing_key(&keys.private_key_jwk).await?;
+    l1_put(INSTANCE_ACTOR_L1_SLOT, key.clone(), now_ms);
+    Ok(key)
 }

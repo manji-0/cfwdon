@@ -1,5 +1,8 @@
 use super::AppConfig;
-use crate::identity::{account_webfinger_acct, actor_url, public_key_id, shared_inbox_url};
+use crate::identity::{
+    account_webfinger_acct, actor_url, instance_actor_key_id, instance_actor_url,
+    instance_base_url, instance_host, public_key_id, shared_inbox_url,
+};
 use crate::profile::activitypub_profile_attachments;
 use crate::response::media_object_url;
 use crate::time_html::activitypub_datetime_string;
@@ -122,5 +125,55 @@ pub(crate) fn build_activitypub_actor_document(
         manually_approves_followers: account.is_locked(),
         discoverable: account.is_discoverable(),
         published: activitypub_datetime_string(account.created_at()),
+    }
+}
+
+/// Mastodon's instance actor (`InstanceActorSerializer`): the `Application`
+/// at `/actor`, named after the instance domain, whose key signs the fetches
+/// the server makes on its own behalf.
+#[derive(Debug, serde::Serialize)]
+pub(crate) struct InstanceActorResponse {
+    #[serde(rename = "@context")]
+    pub(crate) context: Vec<&'static str>,
+    pub(crate) id: String,
+    #[serde(rename = "type")]
+    pub(crate) actor_type: &'static str,
+    #[serde(rename = "preferredUsername")]
+    pub(crate) preferred_username: String,
+    pub(crate) inbox: String,
+    pub(crate) outbox: String,
+    pub(crate) url: String,
+    pub(crate) endpoints: ActivityPubActorEndpoints,
+    #[serde(rename = "publicKey")]
+    pub(crate) public_key: ActivityPubPublicKey,
+    #[serde(rename = "manuallyApprovesFollowers")]
+    pub(crate) manually_approves_followers: bool,
+}
+
+pub(crate) fn build_instance_actor_document(
+    config: &AppConfig,
+    public_key_pem: &str,
+) -> InstanceActorResponse {
+    let id = instance_actor_url(config);
+    InstanceActorResponse {
+        context: vec![
+            "https://www.w3.org/ns/activitystreams",
+            "https://w3id.org/security/v1",
+        ],
+        id: id.clone(),
+        actor_type: "Application",
+        preferred_username: instance_host(config),
+        inbox: format!("{id}/inbox"),
+        outbox: format!("{id}/outbox"),
+        url: instance_base_url(config),
+        endpoints: ActivityPubActorEndpoints {
+            shared_inbox: shared_inbox_url(config),
+        },
+        public_key: ActivityPubPublicKey {
+            id: instance_actor_key_id(config),
+            owner: id,
+            public_key_pem: public_key_pem.to_owned(),
+        },
+        manually_approves_followers: true,
     }
 }

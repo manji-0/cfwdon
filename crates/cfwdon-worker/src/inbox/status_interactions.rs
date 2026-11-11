@@ -175,7 +175,7 @@ async fn ensure_announce_boost_target(
         return Ok(());
     }
 
-    match resolve_remote_status_by_url(db, config, object_uri, None).await {
+    match resolve_remote_status_by_url(db, config, object_uri).await {
         Ok(Some(_)) => Ok(()),
         Ok(None) => {
             log_json_event(serde_json::json!({

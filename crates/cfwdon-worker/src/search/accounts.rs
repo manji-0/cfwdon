@@ -700,7 +700,7 @@ pub(crate) async fn resolve_cached_exact_search_account(
         else {
             return Ok(None);
         };
-        fresh_remote_search_account_response(db, config, &actor, &handle.username, viewer).await?
+        fresh_remote_search_account_response(db, config, &actor, &handle.username).await?
     };
 
     if following_only {
@@ -728,9 +728,8 @@ async fn fresh_remote_search_account_response(
     config: &AppConfig,
     actor: &RemoteActorRow,
     expected_username: &str,
-    viewer: Option<&LocalAccount>,
 ) -> Result<MastodonAccountResponse> {
-    let fetch_context = RemoteCollectionFetchContext::public(config, db, viewer);
+    let fetch_context = RemoteCollectionFetchContext::public(config, db);
     let fetched =
         match fetch_remote_actor_profile_with_context(&actor.actor_uri, Some(&fetch_context)).await
         {

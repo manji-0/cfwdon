@@ -98,9 +98,8 @@ pub(crate) async fn refreshed_remote_actor_response(
     db: &D1Database,
     config: &cfwdon_core::AppConfig,
     actor: &RemoteActorRow,
-    viewer: Option<&LocalAccount>,
 ) -> Result<MastodonAccountResponse> {
-    let fetch_context = RemoteCollectionFetchContext::public(config, db, viewer);
+    let fetch_context = RemoteCollectionFetchContext::public(config, db);
     match fetch_remote_actor_profile_with_context(&actor.actor_uri, Some(&fetch_context)).await {
         Ok(fetched) => {
             upserted_remote_actor_response_with_document(

@@ -490,9 +490,9 @@ async fn handle_remote_context_fetch(
         return Ok(());
     }
 
-    // Signed resolve path (authorized_fetch) via viewer or any local account.
+    // Signed resolve path (authorized_fetch), signed as the instance actor.
     // Propagate fetch errors into job last_error for operability.
-    match resolve_remote_status_by_url(db, config, &payload.uri, None).await {
+    match resolve_remote_status_by_url(db, config, &payload.uri).await {
         Ok(Some(_)) => Ok(()),
         Ok(None) => Err(Error::RustError(format!(
             "remote_context_fetch unresolved: {}",

@@ -37,40 +37,29 @@ thread_local! {
 pub(crate) enum RemoteFetchAuthMode {
     /// Public documents only — skip signed GET (avoids slow signed failures / WAF paths).
     Public,
-    /// Prefer signed GET when a local signer is available, then fall back to unsigned.
+    /// Prefer a GET signed as the instance actor, then fall back to unsigned.
     Authorized,
 }
 
 pub(crate) struct RemoteCollectionFetchContext<'a> {
     pub(crate) config: &'a AppConfig,
     pub(crate) db: &'a D1Database,
-    pub(crate) signer: Option<&'a LocalAccount>,
     pub(crate) auth_mode: RemoteFetchAuthMode,
 }
 
 impl<'a> RemoteCollectionFetchContext<'a> {
-    pub(crate) fn public(
-        config: &'a AppConfig,
-        db: &'a D1Database,
-        signer: Option<&'a LocalAccount>,
-    ) -> Self {
+    pub(crate) fn public(config: &'a AppConfig, db: &'a D1Database) -> Self {
         Self {
             config,
             db,
-            signer,
             auth_mode: RemoteFetchAuthMode::Public,
         }
     }
 
-    pub(crate) fn authorized(
-        config: &'a AppConfig,
-        db: &'a D1Database,
-        signer: Option<&'a LocalAccount>,
-    ) -> Self {
+    pub(crate) fn authorized(config: &'a AppConfig, db: &'a D1Database) -> Self {
         Self {
             config,
             db,
-            signer,
             auth_mode: RemoteFetchAuthMode::Authorized,
         }
     }
@@ -240,8 +229,7 @@ pub(crate) fn signed_fetch_allows_unsigned_fallback(error: &Error) -> bool {
     // non-JSON challenge bodies that still leave the unsigned public document
     // reachable.
     let message = error.to_string();
-    message.contains("private signing key is missing")
-        || message.contains("HTTP ")
+    message.contains("HTTP ")
         || message.contains("error decoding response body")
         || message.contains("expected value")
         || message.contains("invalid type")
@@ -254,9 +242,8 @@ pub(crate) async fn fetch_activitypub_document_with_context(
 ) -> Result<serde_json::Value> {
     if let Some(context) = fetch_context
         && context.auth_mode == RemoteFetchAuthMode::Authorized
-        && let Some(signer) = context.signer
     {
-        match fetch_signed_activitypub_document(context.config, context.db, signer, url).await {
+        match fetch_signed_activitypub_document(context.config, context.db, url).await {
             Ok(document) => return Ok(document),
             Err(error) if signed_fetch_allows_unsigned_fallback(&error) => {
                 log_json_event(serde_json::json!({
@@ -839,9 +826,6 @@ mod tests {
     fn signed_fetch_allows_unsigned_fallback_for_auth_failures() {
         assert!(signed_fetch_allows_unsigned_fallback(&Error::RustError(
             "failed to fetch signed remote document https://x: HTTP 401".to_owned()
-        )));
-        assert!(signed_fetch_allows_unsigned_fallback(&Error::RustError(
-            "account private signing key is missing".to_owned()
         )));
         assert!(signed_fetch_allows_unsigned_fallback(&Error::RustError(
             "failed to fetch signed remote document https://x: HTTP 523".to_owned()
