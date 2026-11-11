@@ -20,9 +20,10 @@ pub use account::{
     ApprovalReview, ComposingRegistration, LocalAccount, LocalAccountRecord, ProfileField,
     RegisteringAccount, RegistrationEvent, RegistrationFieldIssue, RegistrationIntent,
     RegistrationUniquenessFacts, RegistrationValidationErrors, RegistrationValidationField,
-    RegistrationsMode, ReviewOutcome, SIGN_UP_REASON_MAX_CHARS, SignUpRefused, Username,
-    UsernameError, finalize_registration_validation, registration_field_issue_message,
-    registration_uniqueness_errors, sign_up_approval, sign_up_reason_too_long,
+    RegistrationsMode, RegistrationsModeSetting, ReviewOutcome, SIGN_UP_REASON_MAX_CHARS,
+    SignUpRefused, Username, UsernameError, finalize_registration_validation,
+    registration_field_issue_message, registration_uniqueness_errors, sign_up_approval,
+    sign_up_reason_too_long,
 };
 pub use delivery::{
     DELIVERY_MAX_ATTEMPTS, DeliveryAttemptOutcome, FollowInboxResponse,

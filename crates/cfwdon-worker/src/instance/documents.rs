@@ -366,6 +366,17 @@ mod tests {
     }
 
     #[test]
+    fn instance_documents_require_approval_by_default() {
+        let config = AppConfig::new("https://social.example", "cfwdon", "test instance");
+        let v1 = build_instance_v1_document(&sample_summary(), &config, 1, 1, 1, 1);
+        let v2 = build_instance_v2_document(&sample_summary(), &config, 1);
+        assert_eq!(v1["registrations"], true);
+        assert_eq!(v1["approval_required"], true);
+        assert_eq!(v2["registrations"]["enabled"], true);
+        assert_eq!(v2["registrations"]["approval_required"], true);
+    }
+
+    #[test]
     fn instance_documents_report_the_registrations_mode() {
         let mut config = AppConfig::new("https://social.example", "cfwdon", "test instance");
         for (mode, enabled, approval_required) in [

@@ -45,14 +45,17 @@ pub enum ReviewOutcome {
 }
 
 /// The instance's `registrations_mode`, named as Mastodon names it.
+///
+/// The default is `Approved`: an instance whose operator never chose a mode
+/// holds sign-ups for review instead of handing out working accounts.
 #[derive(
     Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
 )]
 #[serde(rename_all = "lowercase")]
 pub enum RegistrationsMode {
-    #[default]
     Open,
     /// Every sign-up waits for an admin.
+    #[default]
     Approved,
     /// Mastodon's `none`: no sign-ups at all.
     #[serde(rename = "none")]
@@ -88,6 +91,45 @@ impl RegistrationsMode {
     /// `approval_required` in the instance documents.
     pub fn approval_required(self) -> bool {
         self == Self::Approved
+    }
+}
+
+/// What the `REGISTRATIONS_MODE` setting held.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum RegistrationsModeSetting {
+    /// Unset or blank.
+    Unset,
+    Named(RegistrationsMode),
+    /// A value that names no mode, such as a typo of `none`.
+    Unrecognized,
+}
+
+impl RegistrationsModeSetting {
+    pub const ALL: [Self; 5] = [
+        Self::Unset,
+        Self::Named(RegistrationsMode::Open),
+        Self::Named(RegistrationsMode::Approved),
+        Self::Named(RegistrationsMode::Closed),
+        Self::Unrecognized,
+    ];
+
+    pub fn parse(value: Option<&str>) -> Self {
+        match value.map(str::trim).filter(|value| !value.is_empty()) {
+            None => Self::Unset,
+            Some(value) => {
+                RegistrationsMode::from_name(value).map_or(Self::Unrecognized, Self::Named)
+            }
+        }
+    }
+
+    /// Only an explicit `open` takes sign-ups without review. Unset and
+    /// unrecognized settings fail closed to `approved`, which still takes
+    /// sign-ups but holds each one for an admin.
+    pub fn mode(self) -> RegistrationsMode {
+        match self {
+            Self::Named(mode) => mode,
+            Self::Unset | Self::Unrecognized => RegistrationsMode::Approved,
+        }
     }
 }
 
@@ -147,6 +189,43 @@ mod tests {
         ] {
             assert_eq!(sign_up_approval(mode, ip), expected, "{mode:?} {ip:?}");
         }
+    }
+
+    #[test]
+    fn only_an_explicit_open_setting_opens_registrations() {
+        for (value, expected) in [
+            (None, RegistrationsModeSetting::Unset),
+            (Some(""), RegistrationsModeSetting::Unset),
+            (Some("  "), RegistrationsModeSetting::Unset),
+            (
+                Some("open"),
+                RegistrationsModeSetting::Named(RegistrationsMode::Open),
+            ),
+            (
+                Some(" Approved "),
+                RegistrationsModeSetting::Named(RegistrationsMode::Approved),
+            ),
+            (
+                Some("none"),
+                RegistrationsModeSetting::Named(RegistrationsMode::Closed),
+            ),
+            (Some("closed"), RegistrationsModeSetting::Unrecognized),
+            (Some("aproved"), RegistrationsModeSetting::Unrecognized),
+        ] {
+            assert_eq!(
+                RegistrationsModeSetting::parse(value),
+                expected,
+                "{value:?}"
+            );
+        }
+        for setting in RegistrationsModeSetting::ALL {
+            assert_eq!(
+                setting.mode() == RegistrationsMode::Open,
+                setting == RegistrationsModeSetting::Named(RegistrationsMode::Open),
+                "{setting:?}"
+            );
+        }
+        assert_eq!(RegistrationsMode::default(), RegistrationsMode::Approved);
     }
 
     #[test]

@@ -1,8 +1,9 @@
 use cfwdon_domain::{
     AccountApproval, AccountId, AccountKeyMaterial, ApprovalReview, ComposingRegistration,
     IpSignUpDecision, LocalAccount, QuoteApprovalPolicy, RegistrationEvent, RegistrationFieldIssue,
-    RegistrationUniquenessFacts, RegistrationValidationErrors, RegistrationsMode, ReviewOutcome,
-    Visibility, registration_uniqueness_errors, sign_up_approval,
+    RegistrationUniquenessFacts, RegistrationValidationErrors, RegistrationsMode,
+    RegistrationsModeSetting, ReviewOutcome, Visibility, registration_uniqueness_errors,
+    sign_up_approval,
 };
 use stateright::{Checker, Model, Property};
 
@@ -40,7 +41,8 @@ pub(crate) struct RegistrationPipelineModelState {
     pub(crate) agreement: bool,
     pub(crate) username_taken: bool,
     pub(crate) email_taken: bool,
-    pub(crate) mode: RegistrationsMode,
+    /// The `REGISTRATIONS_MODE` setting; `setting.mode()` is the mode in force.
+    pub(crate) setting: RegistrationsModeSetting,
     pub(crate) ip: IpSignUpDecision,
     /// Set when the account is inserted; `None` before and after rejection.
     pub(crate) approval: Option<AccountApproval>,
@@ -225,7 +227,7 @@ pub(crate) fn apply_registration_pipeline_validate(
 pub(crate) fn registration_pipeline_sign_up_approval(
     state: &RegistrationPipelineModelState,
 ) -> Option<AccountApproval> {
-    sign_up_approval(state.mode, state.ip).ok()
+    sign_up_approval(state.setting.mode(), state.ip).ok()
 }
 
 /// Whether a credential for the account authorizes API requests: the token
@@ -289,7 +291,7 @@ impl Model for RegistrationPipelineModel {
                     for agreement in [false, true] {
                         for username_taken in [false, true] {
                             for email_taken in [false, true] {
-                                for mode in RegistrationsMode::ALL {
+                                for setting in RegistrationsModeSetting::ALL {
                                     for ip in IpSignUpDecision::ALL {
                                         states.push(RegistrationPipelineModelState {
                                             stage: RegistrationStage::Composing,
@@ -299,7 +301,7 @@ impl Model for RegistrationPipelineModel {
                                             agreement,
                                             username_taken,
                                             email_taken,
-                                            mode,
+                                            setting,
                                             ip,
                                             approval: None,
                                             reviewed: false,
@@ -505,13 +507,13 @@ impl Model for RegistrationPipelineModel {
                 |_, state: &RegistrationPipelineModelState| {
                     state.stage != RegistrationStage::Refused
                         || state.ip == IpSignUpDecision::Blocked
-                        || state.mode == RegistrationsMode::Closed
+                        || state.setting.mode() == RegistrationsMode::Closed
                 },
             ),
             Property::always(
                 "closed_registrations_never_create_an_account",
                 |_, state: &RegistrationPipelineModelState| {
-                    state.mode != RegistrationsMode::Closed
+                    state.setting.mode() != RegistrationsMode::Closed
                         || !matches!(
                             state.stage,
                             RegistrationStage::Registered
@@ -535,7 +537,7 @@ impl Model for RegistrationPipelineModel {
             Property::always(
                 "held_sign_up_is_created_pending",
                 |_, state: &RegistrationPipelineModelState| {
-                    let needs_approval = state.mode == RegistrationsMode::Approved
+                    let needs_approval = state.setting.mode() == RegistrationsMode::Approved
                         || state.ip == IpSignUpDecision::RequiresApproval;
                     state.stage != RegistrationStage::Registered
                         || state.approval
@@ -558,8 +560,16 @@ impl Model for RegistrationPipelineModel {
                 |_, state: &RegistrationPipelineModelState| {
                     !registration_pipeline_api_access(state)
                         || state.reviewed
-                        || (state.mode == RegistrationsMode::Open
+                        || (state.setting.mode() == RegistrationsMode::Open
                             && state.ip == IpSignUpDecision::Open)
+                },
+            ),
+            Property::always(
+                "only_an_explicit_open_setting_skips_review",
+                |_, state: &RegistrationPipelineModelState| {
+                    state.approval != Some(AccountApproval::Approved)
+                        || state.reviewed
+                        || state.setting == RegistrationsModeSetting::Named(RegistrationsMode::Open)
                 },
             ),
             Property::always(

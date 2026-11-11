@@ -21,7 +21,7 @@ The worker is therefore a **restricted** implementation of the abstract model: i
 
 ## Catalog
 
-The static catalog [`REFINEMENT_CATALOG`](../../crates/cfwdon-models/src/refinement/catalog.rs) lists all seventeen models with domain modules and worker call sites. Every cataloged model currently has an executable refinement check.
+The static catalog [`REFINEMENT_CATALOG`](../../crates/cfwdon-models/src/refinement/catalog.rs) lists all sixteen models with domain modules and worker call sites. Every cataloged model currently has an executable refinement check.
 
 | Model | Domain module | Worker sites | Executable refinement |
 | --- | --- | --- | --- |

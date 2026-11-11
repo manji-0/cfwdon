@@ -45,10 +45,50 @@ curl -s -o /dev/null -w '%{http_code}\n' -H 'Accept: application/activity+json' 
 
 - [ ] Each prints `200` (the webfinger and actor ones once the account exists).
 
-### Sign-In And The First Admin
+### The First Admin
+<!-- constrained-by ../reference/configuration.md#registration-vars -->
 
+Auth0 and Access sign-ins never create accounts, and `REGISTRATIONS_MODE` defaults to `approved`, so the first account is created through the sign-up API and waits for approval like any other. Nobody can approve it from `/admin` yet, so the operator approves it from the command line.
+
+1. Register an app that may create accounts, and get an app token for it:
+
+   ```sh
+   curl -s -X POST $O/api/v1/apps \
+     -F client_name=bootstrap -F redirect_uris=urn:ietf:wg:oauth:2.0:oob -F scopes=write
+   # Copy client_id and client_secret from the answer.
+   curl -s -X POST $O/oauth/token \
+     -F grant_type=client_credentials -F redirect_uri=urn:ietf:wg:oauth:2.0:oob \
+     -F client_id=<client_id> -F client_secret=<client_secret> -F scope=write
+   ```
+
+2. Sign up with that app token. Use the e-mail address your Auth0 user signs in with, so the Auth0 sign-in finds the account:
+
+   ```sh
+   curl -s -X POST $O/api/v1/accounts -H "Authorization: Bearer <app access_token>" \
+     -F username=alice -F email=alice@example.com -F password='<a long password>' \
+     -F agreement=true -F locale=en
+   ```
+
+   The answer holds an access token. Until the account is approved, the API answers it with `403` and `{"error":"Your login is currently pending approval"}`.
+
+3. Approve the account. The recipe deletes its `pending_account_approvals` row through `wrangler d1 execute`, which is what the admin approve endpoint does:
+
+   ```sh
+   just approve-account --remote alice              # or the e-mail address
+   just approve-account --local alice               # the `just worker-dev` database
+   ```
+
+   It prints the matched account and `approved`, or `already approved; nothing to do` on a second run. Add `--database <name>` when the D1 binding is not `DB`.
+
+4. Grant admin access: give the Auth0 user a role in `AUTH0_ADMIN_ROLES`, or list the account's e-mail in `ADMIN_EMAILS`.
+
+`ADMIN_EMAILS` never approves a sign-up by itself, because nothing verifies the e-mail a sign-up gives. For the same reason, approve an account whose e-mail is in `ADMIN_EMAILS` only after you have checked that its owner controls that address: once approved, it is an admin.
+
+- [ ] `curl -s $O/api/v1/instance | jq "{registrations, approval_required}"` shows `approval_required: true`, unless you set `REGISTRATIONS_MODE` on purpose.
+- [ ] The first admin account is approved: `GET $O/api/v1/accounts/verify_credentials` with its token answers `200`.
 - [ ] Sign in through Auth0 following [Validate the Flow](auth0-configuration.md#validate-the-flow). The e-mail claim is set and the local account links.
 - [ ] A user with a role in `AUTH0_ADMIN_ROLES` opens `$O/admin`; a user without one gets 403 from `GET $O/api/cfwdon/admin/deliveries`.
+- [ ] Later sign-ups show on the admin UI's pending accounts page, where admins approve or reject them.
 
 ### Posting With Media; Metadata Is Stripped
 

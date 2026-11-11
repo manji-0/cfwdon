@@ -148,6 +148,15 @@ mod tests {
     }
 
     #[test]
+    fn nodeinfo_reports_open_registrations_under_the_default_approved_mode() {
+        let config = AppConfig::new("https://social.example", "cfwdon", "test instance");
+        assert_eq!(config.registrations_mode, RegistrationsMode::Approved);
+        let document =
+            build_nodeinfo_document_with_halfyear(&sample_summary(), &config, 1, 1, 1, 1);
+        assert_eq!(document["openRegistrations"], serde_json::json!(true));
+    }
+
+    #[test]
     fn nodeinfo_open_registrations_matches_instance_helper() {
         let mut config = AppConfig::new("https://social.example", "cfwdon", "test instance");
         for mode in RegistrationsMode::ALL {

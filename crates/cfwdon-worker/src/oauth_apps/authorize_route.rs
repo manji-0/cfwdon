@@ -13,7 +13,6 @@ use crate::auth::{
 };
 use crate::db_session::bind_request_d1;
 use crate::id_utils::generate_entity_id;
-use crate::identity::instance_base_url;
 use crate::oauth_store::OAuthAppRow;
 use crate::runtime_config::load_config;
 use crate::tracked_d1::D1Database;
@@ -223,7 +222,6 @@ pub(in crate::oauth_apps) fn access_authenticated_without_account_response(
         .unwrap_or_default();
     Ok(Response::from_json(&serde_json::json!({
         "error": "Auth0 authentication succeeded, but no local account is registered for this email.",
-        "registration_url": format!("{}/auth/sign_up", instance_base_url(config)),
         "logout_url": logout_url,
     }))?
     .with_status(403))

@@ -5,8 +5,8 @@ mod registration;
 mod username;
 
 pub use approval::{
-    AccountApproval, ApprovalReview, RegistrationsMode, ReviewOutcome, SIGN_UP_REASON_MAX_CHARS,
-    SignUpRefused, sign_up_approval, sign_up_reason_too_long,
+    AccountApproval, ApprovalReview, RegistrationsMode, RegistrationsModeSetting, ReviewOutcome,
+    SIGN_UP_REASON_MAX_CHARS, SignUpRefused, sign_up_approval, sign_up_reason_too_long,
 };
 pub use email::{AccessEmail, AccessEmailError};
 pub use record::LocalAccountRecord;

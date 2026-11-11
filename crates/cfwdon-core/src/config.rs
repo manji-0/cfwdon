@@ -121,7 +121,7 @@ impl AppConfig {
             auth0_admin_roles: Vec::new(),
             federation_activity_retention_days: Some(30),
             authorized_fetch: false,
-            registrations_mode: cfwdon_domain::RegistrationsMode::Open,
+            registrations_mode: cfwdon_domain::RegistrationsMode::Approved,
         }
     }
 }

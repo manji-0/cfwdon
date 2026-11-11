@@ -1,7 +1,7 @@
 use crate::identity::{normalize_configured_instance_domain, parse_csv_list};
 use crate::policy_documents::policy_html_from_sources;
 use cfwdon_core::{AppConfig, BuildMetadata, TimelineAccessLevel, parse_custom_emojis_json};
-use cfwdon_domain::RegistrationsMode;
+use cfwdon_domain::{RegistrationsMode, RegistrationsModeSetting};
 use std::cell::RefCell;
 use worker::{Env, RouteContext};
 
@@ -275,21 +275,18 @@ where
     config
 }
 
-/// Unset or blank means `open`. A value that names no mode (a typo of `none` or
-/// `approved`, say) fails closed to `approved`: sign-ups still work but wait
-/// for an admin, rather than opening an instance meant to be gated.
+/// Unset, blank, and unrecognized values all hold sign-ups for approval; only
+/// an explicit `open` takes them without review. An unrecognized value is
+/// logged, since it is most likely a typo of a mode the operator meant.
 fn registrations_mode_from_var(value: Option<String>) -> RegistrationsMode {
-    let Some(value) = value.filter(|value| !value.trim().is_empty()) else {
-        return RegistrationsMode::Open;
-    };
-    if let Some(mode) = RegistrationsMode::from_name(&value) {
-        return mode;
-    }
+    let setting = RegistrationsModeSetting::parse(value.as_deref());
     #[cfg(target_arch = "wasm32")]
-    worker::console_error!(
-        "REGISTRATIONS_MODE={value:?} is not open, approved, or none; holding sign-ups for approval"
-    );
-    RegistrationsMode::Approved
+    if setting == RegistrationsModeSetting::Unrecognized {
+        worker::console_error!(
+            "REGISTRATIONS_MODE={value:?} is not open, approved, or none; holding sign-ups for approval"
+        );
+    }
+    setting.mode()
 }
 
 /// `true`, `1`, `yes` and `on` (any case) turn a flag on; anything else is off.
@@ -598,10 +595,10 @@ mod tests {
     }
 
     #[test]
-    fn registrations_mode_is_open_by_default_and_fails_closed() {
+    fn registrations_mode_is_approved_unless_set_to_another_mode() {
         assert_eq!(
             config_from_vars(|_| None).registrations_mode,
-            RegistrationsMode::Open
+            RegistrationsMode::Approved
         );
         for (value, expected) in [
             ("open", RegistrationsMode::Open),
@@ -610,7 +607,8 @@ mod tests {
             ("none", RegistrationsMode::Closed),
             ("closed", RegistrationsMode::Approved),
             ("aproved", RegistrationsMode::Approved),
-            (" ", RegistrationsMode::Open),
+            (" ", RegistrationsMode::Approved),
+            ("", RegistrationsMode::Approved),
         ] {
             let config =
                 config_from_vars(|key| (key == "REGISTRATIONS_MODE").then(|| value.to_owned()));

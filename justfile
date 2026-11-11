@@ -29,6 +29,7 @@ ci-server: fmt-check clippy test
     python3 scripts/check_query_plans.py
     python3 scripts/check_module_layers.py
     python3 scripts/check_pending_account_guard.py
+    python3 scripts/check_pending_account_guard.py --self-test
 
 ci-wrangler-dry-run:
     WRANGLER_LOG=error wrangler deploy --dry-run
@@ -40,3 +41,8 @@ worker-dev *args:
 
 web-ui-dev *args:
     node scripts/run_web_ui_dev.mjs {{args}}
+
+# Approve a pending account by username or e-mail, e.g. the first admin:
+#   just approve-account --remote alice
+approve-account *args:
+    bash scripts/approve_account.sh {{args}}

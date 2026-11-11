@@ -179,15 +179,17 @@ These Auth0 values are deployment configuration rather than secrets. Keep actual
 ## Link Local Accounts
 <!-- derived-from #configure-the-e-mail-claim -->
 
-Auth0 authentication only proves the user identity. A matching local account must already exist in D1.
+Auth0 authentication only proves the user identity. It never creates a local account: earlier versions could create one from an Auth0 identity, which bypassed `REGISTRATIONS_MODE`. Each user signs up through `POST /api/v1/accounts` with the e-mail address Auth0 puts in the token, and under the default `REGISTRATIONS_MODE=approved` an admin approves the account before it can be used.
 
 For each user who should log in through Auth0:
 
 1. Confirm the Auth0 user has a verified e-mail address.
 2. Confirm the configured `AUTH0_EMAIL_CLAIM` resolves to that e-mail address in the access token.
-3. Confirm a local `cfwdon` account exists with the same e-mail address in `accounts.access_email`.
+3. Confirm a local `cfwdon` account exists with the same e-mail address in `accounts.access_email`, and that it is approved.
 
-If Auth0 succeeds but no local account matches, `cfwdon` returns a 403 response with a registration URL and an Auth0 logout URL.
+The first account has no admin to approve it. Create it with the sign-up API and approve it with `just approve-account`, as [The First Admin](launch-checklist.md#the-first-admin) describes. `ADMIN_EMAILS` and `AUTH0_ADMIN_ROLES` grant `/admin` only to an approved account.
+
+If Auth0 succeeds but no local account matches, `cfwdon` returns a 403 response with an error message and an Auth0 logout URL. If the account exists but waits for approval, it returns `403` with `{"error":"Your login is currently pending approval"}`.
 
 ## Validate the Flow
 <!-- derived-from #configure-wranglertoml -->
@@ -221,7 +223,7 @@ The token must be signed with `RS256`, have `iss` equal to the Auth0 tenant issu
 | Token endpoint rejects the callback code | The Auth0 application must allow Authorization Code with PKCE and must not require a client secret. |
 | Web UI signs out after about an hour | Enable API **Allow Offline Access**, application **Refresh Token Rotation**, and 7-day refresh-token lifetimes. Confirm login requests include `offline_access` and that a `cfwdon_auth0_refresh_token` cookie is set. |
 | Protected routes reject a Bearer token | Confirm `AUTH0_DOMAIN`, `AUTH0_AUDIENCE`, token `iss`, token `aud`, and signing algorithm `RS256`. |
-| Login succeeds but `cfwdon` returns 403 | The configured e-mail claim does not match a local `accounts.access_email`, or the local account does not exist. |
+| Login succeeds but `cfwdon` returns 403 | The configured e-mail claim does not match a local `accounts.access_email`, or the local account does not exist. Sign up through the API with that e-mail (see [The First Admin](launch-checklist.md#the-first-admin)). If the body says the login is pending approval, approve the account in `/admin` or with `just approve-account`. |
 | Error says the e-mail claim is missing | Add or fix the Auth0 Post Login Action, then request a new access token for `AUTH0_AUDIENCE`. |
 
 ## Summary

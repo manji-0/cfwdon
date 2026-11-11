@@ -1,6 +1,6 @@
 use cfwdon_domain::{
     AccountApproval, ApprovalReview, IpSignUpDecision, RegistrationEvent, RegistrationsMode,
-    ReviewOutcome, finalize_registration_validation, sign_up_approval,
+    RegistrationsModeSetting, ReviewOutcome, finalize_registration_validation, sign_up_approval,
 };
 
 use crate::refinement::verify::{assert_model_matches_domain, assert_worker_refinement};
@@ -31,10 +31,22 @@ fn worker_register_succeeds(state: RegistrationPipelineModelState) -> bool {
     registration_pipeline_finalize_allowed(&state)
 }
 
-/// Mirrors `create_account_placeholder_response`: `sign_up_approval` on the
-/// configured mode and the client's IP decision, before the form is read.
+/// A `REGISTRATIONS_MODE` value that holds the setting.
+fn registrations_mode_var(setting: RegistrationsModeSetting) -> Option<&'static str> {
+    match setting {
+        RegistrationsModeSetting::Unset => None,
+        RegistrationsModeSetting::Named(mode) => Some(mode.as_str()),
+        RegistrationsModeSetting::Unrecognized => Some("aproved"),
+    }
+}
+
+/// Mirrors `registrations_mode_from_var` and
+/// `create_account_placeholder_response`: the mode parsed from the raw
+/// variable, then `sign_up_approval` with the client's IP decision, before the
+/// form is read.
 fn worker_sign_up_approval(state: RegistrationPipelineModelState) -> Option<AccountApproval> {
-    sign_up_approval(state.mode, state.ip).ok()
+    let mode = RegistrationsModeSetting::parse(registrations_mode_var(state.setting)).mode();
+    sign_up_approval(mode, state.ip).ok()
 }
 
 /// Mirrors `review_account_response`: the domain review of the account's
@@ -199,7 +211,8 @@ pub(crate) fn check_registration_pipeline_refinement() {
         );
         assert_eq!(
             worker_stage == RegistrationStage::Refused,
-            state.ip == IpSignUpDecision::Blocked || state.mode == RegistrationsMode::Closed,
+            state.ip == IpSignUpDecision::Blocked
+                || state.setting.mode() == RegistrationsMode::Closed,
             "refusal for {state:?}"
         );
 
@@ -254,7 +267,7 @@ pub(crate) fn check_registration_pipeline_refinement() {
         agreement: true,
         username_taken: false,
         email_taken: false,
-        mode: RegistrationsMode::Open,
+        setting: RegistrationsModeSetting::Named(RegistrationsMode::Open),
         ip: IpSignUpDecision::Open,
         approval: None,
         reviewed: false,
@@ -272,7 +285,7 @@ pub(crate) fn check_registration_pipeline_refinement() {
         agreement: true,
         username_taken: true,
         email_taken: false,
-        mode: RegistrationsMode::Open,
+        setting: RegistrationsModeSetting::Named(RegistrationsMode::Open),
         ip: IpSignUpDecision::Open,
         approval: None,
         reviewed: false,
@@ -287,7 +300,7 @@ pub(crate) fn check_registration_pipeline_refinement() {
         agreement: true,
         username_taken: false,
         email_taken: false,
-        mode: RegistrationsMode::Open,
+        setting: RegistrationsModeSetting::Named(RegistrationsMode::Open),
         ip: IpSignUpDecision::RequiresApproval,
         approval: Some(AccountApproval::Pending),
         reviewed: false,
