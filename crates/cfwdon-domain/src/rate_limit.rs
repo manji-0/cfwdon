@@ -318,7 +318,9 @@ fn matches(path: &str, pattern: &[&str]) -> bool {
 }
 
 fn is_inbox_path(path: &str) -> bool {
-    matches(path, &["inbox"]) || matches(path, &["users", "*", "inbox"])
+    matches(path, &["inbox"])
+        || matches(path, &["users", "*", "inbox"])
+        || matches(path, &["actor", "inbox"])
 }
 
 fn is_federation_fetch_path(path: &str) -> bool {
@@ -326,6 +328,8 @@ fn is_federation_fetch_path(path: &str) -> bool {
         || path == "/nodeinfo"
         || path.starts_with("/nodeinfo/")
         || path.starts_with("/users/")
+        || path == "/actor"
+        || path.starts_with("/actor/")
 }
 
 /// The per-account action family a request counts against (Mastodon's `RateLimiter`).
@@ -702,6 +706,9 @@ mod tests {
             ("GET", "/users/alice/statuses/1", vec!["federation_fetch"]),
             ("POST", "/inbox", vec!["inbox_ip"]),
             ("POST", "/users/alice/inbox", vec!["inbox_ip"]),
+            ("GET", "/actor", vec!["federation_fetch"]),
+            ("GET", "/actor/outbox", vec!["federation_fetch"]),
+            ("POST", "/actor/inbox", vec!["inbox_ip"]),
         ];
         for (method, path, buckets) in cases {
             assert_eq!(

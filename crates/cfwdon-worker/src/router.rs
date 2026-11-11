@@ -7,6 +7,7 @@ use crate::d1_metrics::reset_d1_request_metrics;
 use crate::deferred::defer;
 use crate::delivery::kick_outbox_process_queue_after_request;
 use crate::federation::{install_domain_suspensions, install_remote_dns_cache};
+use crate::ip_blocks::ip_access_denied_response;
 use crate::rate_limit::{RateLimitGate, apply_rate_limit_headers, enforce_rate_limits};
 use crate::response_utils::into_mutable_response;
 use crate::routing::{
@@ -15,6 +16,7 @@ use crate::routing::{
     serves_head_as_get, should_apply_auth0_web_session_cookies, without_body,
 };
 use crate::runtime_config::load_config_from_env;
+use crate::tracked_d1::D1Database;
 use worker::{Env, Request, Response, Result, console_error};
 
 pub(crate) async fn handle_fetch(req: Request, env: Env) -> Result<Response> {
@@ -25,6 +27,13 @@ pub(crate) async fn handle_fetch(req: Request, env: Env) -> Result<Response> {
     install_remote_dns_cache(&env, &config.remote_dns_cache_binding);
     install_app_cache(&env, &config.app_cache_binding);
     install_domain_suspensions(&env, &config.database_binding);
+
+    if let Ok(db) = env.d1(&config.database_binding)
+        && let Some(denied) =
+            ip_access_denied_response(&req, &D1Database::new(db), &req.path()).await?
+    {
+        return Ok(denied);
+    }
 
     let request_context = HttpRequestContext::from_request(&req, &env)?;
     if request_context.is_cors_preflight() {

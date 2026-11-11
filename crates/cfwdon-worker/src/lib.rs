@@ -64,6 +64,7 @@ mod id_utils;
 mod identity;
 mod inbox;
 mod instance;
+mod ip_blocks;
 mod lists;
 mod local_polls;
 mod markers;

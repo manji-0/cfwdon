@@ -10,6 +10,7 @@ use super::{
 };
 use crate::d1_metrics::d1_pressure_load_shed_response;
 use crate::db_session::{open_bound_request_session, with_d1_bookmark};
+use crate::federation::instance_domain_blocks;
 use crate::filters::{AccountFilterMatcher, load_account_filter_matcher};
 use crate::public_endpoint_cache::{
     PUBLIC_CACHE_PUBLIC_TIMELINE, PUBLIC_TIMELINE_CACHE_SIZE, load_public_endpoint_cache,
@@ -287,7 +288,15 @@ async fn build_public_timeline_entries(
     }
 
     if include_remote {
+        // Mastodon hides silenced servers' posts from public timelines.
+        let domain_blocks = instance_domain_blocks().await?;
         for (status, actor) in remote_statuses {
+            if domain_blocks
+                .restrictions_for_actor(&actor.domain, &actor.actor_uri)
+                .silenced
+            {
+                continue;
+            }
             if only_media && !remote_media_status_ids.contains(&status.id) {
                 continue;
             }

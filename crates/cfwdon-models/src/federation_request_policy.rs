@@ -1,8 +1,8 @@
 use cfwdon_domain::{
-    ACTIVITYPUB_MAX_DATE_AGE_MS, ACTIVITYPUB_MAX_DATE_AHEAD_MS, RemoteUrlPolicyIssue,
-    activitypub_date_within_skew, activitypub_key_id_matches_actor,
-    activitypub_signature_lists_required_headers, cached_remote_actor_key_matches,
-    host_within_any_blocked_domain, remote_url_policy_from_parts,
+    ACTIVITYPUB_MAX_DATE_AGE_MS, ACTIVITYPUB_MAX_DATE_AHEAD_MS, DomainBlockPolicy,
+    DomainBlockSeverity, RemoteUrlPolicyIssue, activitypub_date_within_skew,
+    activitypub_key_id_matches_actor, activitypub_signature_lists_required_headers,
+    cached_remote_actor_key_matches, domain_restrictions_for_host, remote_url_policy_from_parts,
 };
 use stateright::{Checker, Model, Property};
 
@@ -33,13 +33,15 @@ enum RemoteHostCase {
     UnsupportedScheme,
 }
 
-/// Remote host against an instance domain block on `blocked.example`.
+/// Remote host against a `suspend` block on `blocked.example` and a `silence`
+/// block on `silenced.example`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum DomainBlockCase {
     Unblocked,
     BlockedDomain,
     BlockedSubdomain,
     Lookalike,
+    Silenced,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -83,7 +85,24 @@ pub(crate) enum FederationRequestPolicyAction {
 impl FederationRequestPolicyModel {
     const ACTOR_URI: &'static str = "https://remote.example/users/bob";
     const CANONICAL_ACTOR_URI: &'static str = "https://remote.example/@bob";
-    const SUSPENDED_DOMAINS: [&'static str; 1] = ["blocked.example"];
+    const DOMAIN_BLOCKS: [(&'static str, DomainBlockPolicy); 2] = [
+        (
+            "blocked.example",
+            DomainBlockPolicy {
+                severity: DomainBlockSeverity::Suspend,
+                reject_media: false,
+                reject_reports: false,
+            },
+        ),
+        (
+            "silenced.example",
+            DomainBlockPolicy {
+                severity: DomainBlockSeverity::Silence,
+                reject_media: true,
+                reject_reports: true,
+            },
+        ),
+    ];
 
     fn signed_header_list(set: SignedHeaderSet) -> Vec<String> {
         match set {
@@ -127,6 +146,7 @@ impl FederationRequestPolicyModel {
             DomainBlockCase::BlockedDomain => "blocked.example",
             DomainBlockCase::BlockedSubdomain => "a.blocked.example",
             DomainBlockCase::Lookalike => "notblocked.example",
+            DomainBlockCase::Silenced => "a.silenced.example",
         }
     }
 
@@ -135,7 +155,8 @@ impl FederationRequestPolicyModel {
             DomainBlockCase::Unblocked => DomainBlockCase::BlockedDomain,
             DomainBlockCase::BlockedDomain => DomainBlockCase::BlockedSubdomain,
             DomainBlockCase::BlockedSubdomain => DomainBlockCase::Lookalike,
-            DomainBlockCase::Lookalike => DomainBlockCase::Unblocked,
+            DomainBlockCase::Lookalike => DomainBlockCase::Silenced,
+            DomainBlockCase::Silenced => DomainBlockCase::Unblocked,
         }
     }
 
@@ -199,10 +220,11 @@ impl FederationRequestPolicyModel {
     }
 
     fn domain_suspended(state: &FederationRequestPolicyModelState) -> bool {
-        host_within_any_blocked_domain(
+        domain_restrictions_for_host(
             Self::domain_block_host(state.domain_block),
-            Self::SUSPENDED_DOMAINS,
+            Self::DOMAIN_BLOCKS,
         )
+        .suspended
     }
 
     fn date_within_skew(state: &FederationRequestPolicyModelState) -> bool {
@@ -249,6 +271,7 @@ impl Model for FederationRequestPolicyModel {
                             DomainBlockCase::BlockedDomain,
                             DomainBlockCase::BlockedSubdomain,
                             DomainBlockCase::Lookalike,
+                            DomainBlockCase::Silenced,
                         ] {
                             states.push(FederationRequestPolicyModelState {
                                 signed_headers,
@@ -398,11 +421,13 @@ impl Model for FederationRequestPolicyModel {
                 },
             ),
             Property::always(
-                "unblocked_and_lookalike_domains_federate",
+                "unblocked_lookalike_and_silenced_domains_federate",
                 |_, state: &FederationRequestPolicyModelState| {
                     !matches!(
                         state.domain_block,
-                        DomainBlockCase::Unblocked | DomainBlockCase::Lookalike
+                        DomainBlockCase::Unblocked
+                            | DomainBlockCase::Lookalike
+                            | DomainBlockCase::Silenced
                     ) || !FederationRequestPolicyModel::domain_suspended(state)
                 },
             ),

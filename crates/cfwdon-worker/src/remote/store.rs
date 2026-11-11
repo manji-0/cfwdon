@@ -15,7 +15,7 @@ use crate::background_jobs::{
     enqueue_and_run_background_job_soon, resolve_in_reply_to_payload, soft_enqueue_background_job,
 };
 use crate::custom_emojis::extract_federated_emojis_from_activitypub_object;
-use crate::federation::RemoteActorProfile;
+use crate::federation::{RemoteActorProfile, instance_domain_blocks};
 use crate::id_utils::generate_entity_id;
 use crate::media::{RemoteStatusAttachmentRow, replace_remote_status_attachments};
 use crate::remote::{
@@ -87,7 +87,16 @@ async fn replace_remote_status_dependents(
         &status.content_html,
     )
     .await?;
-    let attachments = remote_status_attachments_from_object(&status.id, object);
+    // A `reject_media` domain block keeps no attachments from that server.
+    let attachments = if instance_domain_blocks()
+        .await?
+        .restrictions_for_url(&status.actor_uri)
+        .reject_media
+    {
+        Vec::new()
+    } else {
+        remote_status_attachments_from_object(&status.id, object)
+    };
     replace_remote_status_attachments(db, &status.id, &attachments).await?;
     if let Some(poll) = extract_remote_poll_draft(object) {
         upsert_remote_status_poll(db, &status.id, &poll).await?;

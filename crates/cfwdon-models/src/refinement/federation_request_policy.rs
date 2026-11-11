@@ -1,7 +1,8 @@
 use cfwdon_domain::{
-    ACTIVITYPUB_REQUIRED_SIGNED_HEADERS, activitypub_date_within_skew,
-    activitypub_key_id_matches_actor, activitypub_signature_lists_required_headers,
-    cached_remote_actor_key_matches, host_within_any_blocked_domain, remote_url_policy_from_parts,
+    ACTIVITYPUB_REQUIRED_SIGNED_HEADERS, DomainBlockPolicy, DomainBlockSeverity,
+    activitypub_date_within_skew, activitypub_key_id_matches_actor,
+    activitypub_signature_lists_required_headers, cached_remote_actor_key_matches,
+    domain_restrictions_for_host, host_within_any_blocked_domain, remote_url_policy_from_parts,
 };
 use stateright::Model;
 
@@ -44,10 +45,15 @@ fn worker_remote_url_allowed(scheme: &str, host: &str, has_userinfo: bool) -> bo
     remote_url_policy_from_parts(scheme, host, has_userinfo).is_ok()
 }
 
-/// Mirrors `host_within_blocked_domains` in the worker's `federation::domain_suspensions`,
-/// which the inbox, delivery, and `url_guard` paths share.
-fn worker_host_suspended(host: &str, suspended_domains: &[String]) -> bool {
-    host_within_any_blocked_domain(host, suspended_domains.iter().map(String::as_str))
+/// Mirrors the worker's `federation::domain_suspensions`: `InstanceDomainBlocks`
+/// keeps only `suspend` blocks in the refused set, which the inbox, delivery,
+/// and `url_guard` paths match with `host_within_blocked_domains`.
+fn worker_host_suspended(host: &str, blocks: &[(&str, DomainBlockPolicy)]) -> bool {
+    let suspended = blocks
+        .iter()
+        .filter(|(_, policy)| policy.severity == DomainBlockSeverity::Suspend)
+        .map(|(domain, _)| *domain);
+    host_within_any_blocked_domain(host, suspended)
 }
 
 /// Mirrors `validate_request_date` skew gate (ignoring parse failures).
@@ -132,19 +138,35 @@ pub(crate) fn check_federation_request_policy_refinement() {
         );
     }
 
-    let suspended_domains = ["blocked.example".to_owned()];
+    let policy = |severity| DomainBlockPolicy {
+        severity,
+        reject_media: false,
+        reject_reports: false,
+    };
+    let blocks = [
+        ("blocked.example", policy(DomainBlockSeverity::Suspend)),
+        ("silenced.example", policy(DomainBlockSeverity::Silence)),
+        ("noop.example", policy(DomainBlockSeverity::Noop)),
+    ];
     let domain_block_cases = [
         ("remote.example", false),
         ("blocked.example", true),
         ("a.blocked.example", true),
         ("BLOCKED.example.", true),
         ("notblocked.example", false),
+        ("silenced.example", false),
+        ("noop.example", false),
     ];
     for (host, expected) in domain_block_cases {
         assert_eq!(
-            worker_host_suspended(host, &suspended_domains),
+            worker_host_suspended(host, &blocks),
             expected,
             "instance domain block for {host}"
+        );
+        assert_eq!(
+            domain_restrictions_for_host(host, blocks).suspended,
+            expected,
+            "domain restrictions for {host}"
         );
     }
 

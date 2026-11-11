@@ -9,6 +9,7 @@ use crate::auth::{find_account_by_email, find_account_by_username, store_account
 use crate::crypto_keys::generate_account_key_material;
 use crate::db_session::bind_request_d1;
 use crate::id_utils::generate_entity_id;
+use crate::ip_blocks::ip_sign_up_decision;
 use crate::oauth_apps::{
     build_oauth_token_document, find_oauth_app_id_by_bearer_token, issue_oauth_access_token,
     oauth_app_has_any_scope, oauth_app_scopes, store_account_password,
@@ -20,6 +21,7 @@ use crate::push::send_push_notification;
 use crate::request_utils::parse_optional_bool;
 use crate::runtime_config::load_config;
 use crate::tracked_d1::D1Database;
+use cfwdon_domain::IpSignUpDecision;
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use worker::{Request, Response, Result, RouteContext, d1::D1Type};
@@ -205,6 +207,14 @@ pub(crate) async fn create_account_placeholder_response(
     };
     if !oauth_app_has_any_scope(&app, &["write:accounts", "write"]) {
         return outside_authorized_scopes_response();
+    }
+    // No approval queue exists, so a range that needs approval cannot sign up
+    // either; Mastodon answers a refused sign-up with 403.
+    if ip_sign_up_decision(&req, &db).await != IpSignUpDecision::Open {
+        return Ok(Response::from_json(
+            &serde_json::json!({ "error": "This action is not allowed" }),
+        )?
+        .with_status(403));
     }
 
     let request = match parse_account_registration_request(&mut req).await {

@@ -1,4 +1,4 @@
-use crate::federation::RemoteActorProfile;
+use crate::federation::{RemoteActorProfile, remote_actor_domain_restrictions};
 use crate::tracked_d1::D1Database;
 use worker::Result;
 use worker::d1::D1Type;
@@ -160,6 +160,21 @@ fn conflicting_handle_bindings<'a>(
 }
 
 pub(crate) async fn upsert_remote_actor(db: &D1Database, actor: &RemoteActorProfile) -> Result<()> {
+    // A `reject_media` domain block keeps no avatar or header for its accounts.
+    let media_rejected;
+    let actor = if remote_actor_domain_restrictions(&actor.domain, &actor.actor_uri)
+        .await?
+        .reject_media
+    {
+        media_rejected = RemoteActorProfile {
+            avatar_url: None,
+            header_url: None,
+            ..actor.clone()
+        };
+        &media_rejected
+    } else {
+        actor
+    };
     let username = actor.username.to_ascii_lowercase();
     let domain = actor.domain.to_ascii_lowercase();
     let clear_bindings = conflicting_handle_bindings(&username, &domain, &actor.actor_uri);

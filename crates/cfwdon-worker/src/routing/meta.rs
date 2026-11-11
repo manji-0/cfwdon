@@ -1,3 +1,10 @@
+use crate::admin_api::{
+    admin_domain_block_create_response, admin_domain_block_delete_response,
+    admin_domain_block_show_response, admin_domain_block_update_response,
+    admin_domain_blocks_list_response, admin_ip_block_create_response,
+    admin_ip_block_delete_response, admin_ip_block_show_response, admin_ip_block_update_response,
+    admin_ip_blocks_list_response,
+};
 use crate::custom_emojis::{
     admin_create_custom_emoji_response, admin_custom_emojis_response,
     admin_delete_custom_emoji_response, admin_update_custom_emoji_response,
@@ -91,6 +98,42 @@ pub(crate) fn add_meta_routes(router: Router<'static, ()>) -> Router<'static, ()
         })
         .delete_async("/api/v1/admin/custom_emojis/:id", |req, ctx| async move {
             admin_delete_custom_emoji_response(req, ctx).await
+        })
+        .get_async("/api/v1/admin/domain_blocks", |req, ctx| async move {
+            admin_domain_blocks_list_response(req, ctx).await
+        })
+        .post_async("/api/v1/admin/domain_blocks", |req, ctx| async move {
+            admin_domain_block_create_response(req, ctx).await
+        })
+        .get_async("/api/v1/admin/domain_blocks/:id", |req, ctx| async move {
+            admin_domain_block_show_response(req, ctx).await
+        })
+        .put_async("/api/v1/admin/domain_blocks/:id", |req, ctx| async move {
+            admin_domain_block_update_response(req, ctx).await
+        })
+        .patch_async("/api/v1/admin/domain_blocks/:id", |req, ctx| async move {
+            admin_domain_block_update_response(req, ctx).await
+        })
+        .delete_async("/api/v1/admin/domain_blocks/:id", |req, ctx| async move {
+            admin_domain_block_delete_response(req, ctx).await
+        })
+        .get_async("/api/v1/admin/ip_blocks", |req, ctx| async move {
+            admin_ip_blocks_list_response(req, ctx).await
+        })
+        .post_async("/api/v1/admin/ip_blocks", |req, ctx| async move {
+            admin_ip_block_create_response(req, ctx).await
+        })
+        .get_async("/api/v1/admin/ip_blocks/:id", |req, ctx| async move {
+            admin_ip_block_show_response(req, ctx).await
+        })
+        .put_async("/api/v1/admin/ip_blocks/:id", |req, ctx| async move {
+            admin_ip_block_update_response(req, ctx).await
+        })
+        .patch_async("/api/v1/admin/ip_blocks/:id", |req, ctx| async move {
+            admin_ip_block_update_response(req, ctx).await
+        })
+        .delete_async("/api/v1/admin/ip_blocks/:id", |req, ctx| async move {
+            admin_ip_block_delete_response(req, ctx).await
         })
         .get_async("/api/oembed", |req, ctx| async move {
             oembed_response(req, ctx).await

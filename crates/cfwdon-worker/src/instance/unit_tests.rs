@@ -1,3 +1,4 @@
+use crate::federation::CachedDomainBlock;
 use crate::identity::nodeinfo_url;
 use crate::instance::{
     build_announcements_document, build_instance_v1_document, build_instance_v2_document,
@@ -5,7 +6,9 @@ use crate::instance::{
     instance_open_registrations, public_domain_blocks, set_instance_translation_enabled,
 };
 use cfwdon_core::AppConfig;
-use cfwdon_domain::{InstanceCapabilities, InstanceSummary, SoftwareInfo};
+use cfwdon_domain::{
+    DomainBlockPolicy, DomainBlockSeverity, InstanceCapabilities, InstanceSummary, SoftwareInfo,
+};
 use std::collections::{HashMap, HashSet};
 
 #[test]
@@ -386,15 +389,42 @@ fn build_nodeinfo_documents_expose_expected_urls_and_counts() {
 
 #[test]
 fn public_domain_blocks_use_mastodon_entity_shape() {
-    let document =
-        serde_json::to_value(public_domain_blocks(&["blocked.example".to_owned()])).unwrap();
+    let block = |domain: &str, severity, obfuscate, comment: Option<&str>| CachedDomainBlock {
+        domain: domain.to_owned(),
+        policy: DomainBlockPolicy {
+            severity,
+            reject_media: false,
+            reject_reports: false,
+        },
+        obfuscate,
+        public_comment: comment.map(str::to_owned),
+    };
+    let blocks = [
+        block("blocked.example", DomainBlockSeverity::Suspend, false, None),
+        block(
+            "example.com",
+            DomainBlockSeverity::Silence,
+            true,
+            Some("spam"),
+        ),
+        block("watched.example", DomainBlockSeverity::Noop, false, None),
+    ];
+    let document = serde_json::to_value(public_domain_blocks(&blocks)).unwrap();
     assert_eq!(
         document,
-        serde_json::json!([{
-            "domain": "blocked.example",
-            "digest": "1f30273176bf43428242811a3bd5e04653804cff849e2ac73a14aa6e00c66a48",
-            "severity": "suspend",
-            "comment": null,
-        }])
+        serde_json::json!([
+            {
+                "domain": "blocked.example",
+                "digest": "1f30273176bf43428242811a3bd5e04653804cff849e2ac73a14aa6e00c66a48",
+                "severity": "suspend",
+                "comment": null,
+            },
+            {
+                "domain": "exa****.*om",
+                "digest": "a379a6f6eeafb9a55e378c118034e2751e682fab9f2d30ab13d2125586ce1947",
+                "severity": "silence",
+                "comment": "spam",
+            },
+        ])
     );
 }

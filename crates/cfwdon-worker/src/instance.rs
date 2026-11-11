@@ -6,7 +6,7 @@ mod trending_links;
 use crate::custom_emojis::{config_with_resolved_custom_emojis, list_custom_emojis};
 use crate::d1_metrics::d1_pressure_load_shed_response;
 use crate::db_session::{bind_request_d1, open_bound_request_session, with_d1_bookmark};
-use crate::federation::suspended_instance_domains;
+use crate::federation::{CachedDomainBlock, instance_domain_blocks};
 use crate::identity::configured_instance_languages;
 use crate::policy_documents::{build_default_terms_of_service_document, configured_html_document};
 use crate::public_endpoint_cache::{
@@ -31,6 +31,7 @@ use crate::trends_cache::{
 };
 pub(crate) use announcements::*;
 use cfwdon_core::AppConfig;
+use cfwdon_domain::{DomainBlockSeverity, obfuscated_domain};
 pub(crate) use documents::*;
 pub(crate) use nodeinfo_documents::*;
 pub(crate) use nodeinfo_routes::*;
@@ -305,32 +306,41 @@ pub(crate) async fn instance_terms_of_service_version_response(
     instance_terms_of_service_response(ctx).await
 }
 
-/// Mastodon `DomainBlock` entity. Every instance domain block is a `suspend`
-/// and the table keeps no public comment.
+/// Mastodon `DomainBlock` entity. `noop` blocks are left out, as Mastodon's
+/// `with_user_facing_limitations` does, and an obfuscated block shows its
+/// domain partly starred out (the digest still names the real domain).
 #[derive(Debug, serde::Serialize)]
 struct PublicDomainBlock<'a> {
-    domain: &'a str,
+    domain: String,
     digest: String,
     severity: &'static str,
-    comment: Option<String>,
+    comment: Option<&'a str>,
 }
 
-fn public_domain_blocks(domains: &[String]) -> Vec<PublicDomainBlock<'_>> {
-    domains
+fn public_domain_blocks(blocks: &[CachedDomainBlock]) -> Vec<PublicDomainBlock<'_>> {
+    blocks
         .iter()
-        .map(|domain| PublicDomainBlock {
-            domain,
-            digest: sha256_hex(domain.as_bytes()),
-            severity: "suspend",
-            comment: None,
+        .filter(|block| block.policy.severity != DomainBlockSeverity::Noop)
+        .map(|block| PublicDomainBlock {
+            domain: if block.obfuscate {
+                obfuscated_domain(&block.domain)
+            } else {
+                block.domain.clone()
+            },
+            digest: sha256_hex(block.domain.as_bytes()),
+            severity: block.policy.severity.as_str(),
+            comment: block.public_comment.as_deref(),
         })
         .collect()
 }
 
 /// Public like tstodon's: there is no setting to hide moderated servers.
 pub(crate) async fn instance_domain_blocks_response() -> Result<Response> {
-    let domains = suspended_instance_domains().await?;
-    cache_public_response(Response::from_json(&public_domain_blocks(&domains))?, 300)
+    let blocks = instance_domain_blocks().await?;
+    cache_public_response(
+        Response::from_json(&public_domain_blocks(blocks.blocks()))?,
+        300,
+    )
 }
 
 pub(crate) async fn instance_languages_response(ctx: RouteContext<()>) -> Result<Response> {
