@@ -40,9 +40,10 @@ pub use error::{
     RemoteStatusError, StatusDraftError, VisibilityError,
 };
 pub use federation::{
-    ACTIVITYPUB_MAX_DATE_SKEW_MS, ACTIVITYPUB_REQUIRED_SIGNED_HEADERS, InboxActivityRecordState,
-    RemoteActorAuthorityIssue, RemoteDnsResolutionIssue, RemoteFetchHostPolicyIssue,
-    RemoteUrlPolicyIssue, activitypub_date_within_skew, activitypub_host_header_matches_url_host,
+    ACTIVITYPUB_MAX_DATE_AGE_MS, ACTIVITYPUB_MAX_DATE_AHEAD_MS,
+    ACTIVITYPUB_REQUIRED_SIGNED_HEADERS, InboxActivityRecordState, RemoteActorAuthorityIssue,
+    RemoteDnsResolutionIssue, RemoteFetchHostPolicyIssue, RemoteUrlPolicyIssue,
+    activitypub_date_within_skew, activitypub_host_header_matches_url_host,
     activitypub_key_id_matches_actor, activitypub_signature_lists_required_headers,
     cached_remote_actor_key_matches, host_is_ip_literal, inbox_activity_after_failure,
     inbox_activity_after_receive, inbox_activity_after_success, is_blocked_ip_address,

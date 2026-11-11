@@ -74,7 +74,7 @@ The generated compatibility inventory currently maps all tracked upstream routes
 ## Security Follow-Up
 
 - Add rate limiting and abuse controls for shared inbox and expensive remote resolution paths.
-- Make signature clock skew policy configurable (it is currently the fixed `ACTIVITYPUB_MAX_DATE_SKEW_MS` constant, 12 hours, in `cfwdon-domain`).
+- Make signature clock skew policy configurable if operators need it. It is currently fixed in `cfwdon-domain` to Mastodon's window: a `Date` up to 12 hours old (`ACTIVITYPUB_MAX_DATE_AGE_MS`) and up to 1 hour ahead (`ACTIVITYPUB_MAX_DATE_AHEAD_MS`).
 - Harden digest and signed-header canonicalization tests.
 - Audit all internal routes and document which must require Auth0 authentication.
 - Keep public media domains outside protected API authentication while preserving cache behavior.

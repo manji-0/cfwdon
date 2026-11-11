@@ -127,11 +127,13 @@ pub(crate) fn check_federation_request_policy_refinement() {
     }
 
     let now_ms = 1_000_000.0;
+    let max_age = cfwdon_domain::ACTIVITYPUB_MAX_DATE_AGE_MS;
+    let max_ahead = cfwdon_domain::ACTIVITYPUB_MAX_DATE_AHEAD_MS;
     assert!(worker_date_within_skew(now_ms, now_ms));
-    assert!(!worker_date_within_skew(
-        now_ms + cfwdon_domain::ACTIVITYPUB_MAX_DATE_SKEW_MS + 1.0,
-        now_ms
-    ));
+    assert!(worker_date_within_skew(now_ms - max_age, now_ms));
+    assert!(worker_date_within_skew(now_ms + max_ahead, now_ms));
+    assert!(!worker_date_within_skew(now_ms - max_age - 1.0, now_ms));
+    assert!(!worker_date_within_skew(now_ms + max_ahead + 1.0, now_ms));
 }
 
 #[cfg(test)]

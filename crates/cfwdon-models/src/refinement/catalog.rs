@@ -435,7 +435,7 @@ pub const REFINEMENT_CATALOG: &[RefinementEntry] = &[
                 worker_guard: "outbound federation fetch",
             },
             OperationMapping {
-                model_action: "ToggleDateSkew",
+                model_action: "CycleDateSkew",
                 domain_call: "activitypub_date_within_skew",
                 implementation_call: "validate_request_date",
                 worker_guard: "Date header parses",

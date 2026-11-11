@@ -1,7 +1,8 @@
 use cfwdon_domain::{
-    ACTIVITYPUB_MAX_DATE_SKEW_MS, RemoteUrlPolicyIssue, activitypub_date_within_skew,
-    activitypub_key_id_matches_actor, activitypub_signature_lists_required_headers,
-    cached_remote_actor_key_matches, remote_url_policy_from_parts,
+    ACTIVITYPUB_MAX_DATE_AGE_MS, ACTIVITYPUB_MAX_DATE_AHEAD_MS, RemoteUrlPolicyIssue,
+    activitypub_date_within_skew, activitypub_key_id_matches_actor,
+    activitypub_signature_lists_required_headers, cached_remote_actor_key_matches,
+    remote_url_policy_from_parts,
 };
 use stateright::{Checker, Model, Property};
 
@@ -34,8 +35,20 @@ enum RemoteHostCase {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum DateSkewCase {
-    Within,
-    Outside,
+    Now,
+    OldestAccepted,
+    FarthestAheadAccepted,
+    TooOld,
+    TooFarAhead,
+}
+
+impl DateSkewCase {
+    fn is_within(self) -> bool {
+        matches!(
+            self,
+            Self::Now | Self::OldestAccepted | Self::FarthestAheadAccepted
+        )
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -53,7 +66,7 @@ pub(crate) enum FederationRequestPolicyAction {
     CycleKeyIdCase,
     ToggleCachedPublicKeyId,
     CycleRemoteHost,
-    ToggleDateSkew,
+    CycleDateSkew,
 }
 
 impl FederationRequestPolicyModel {
@@ -158,8 +171,11 @@ impl FederationRequestPolicyModel {
     fn date_within_skew(state: &FederationRequestPolicyModelState) -> bool {
         let now_ms = 1_000_000.0;
         let parsed_ms = match state.date_skew {
-            DateSkewCase::Within => now_ms,
-            DateSkewCase::Outside => now_ms + ACTIVITYPUB_MAX_DATE_SKEW_MS + 1.0,
+            DateSkewCase::Now => now_ms,
+            DateSkewCase::OldestAccepted => now_ms - ACTIVITYPUB_MAX_DATE_AGE_MS,
+            DateSkewCase::FarthestAheadAccepted => now_ms + ACTIVITYPUB_MAX_DATE_AHEAD_MS,
+            DateSkewCase::TooOld => now_ms - ACTIVITYPUB_MAX_DATE_AGE_MS - 1.0,
+            DateSkewCase::TooFarAhead => now_ms + ACTIVITYPUB_MAX_DATE_AHEAD_MS + 1.0,
         };
         activitypub_date_within_skew(parsed_ms, now_ms)
     }
@@ -196,7 +212,7 @@ impl Model for FederationRequestPolicyModel {
                             key_id_case,
                             cached_public_key_id_present,
                             remote_host,
-                            date_skew: DateSkewCase::Within,
+                            date_skew: DateSkewCase::Now,
                         });
                     }
                 }
@@ -212,7 +228,7 @@ impl Model for FederationRequestPolicyModel {
             FederationRequestPolicyAction::CycleKeyIdCase,
             FederationRequestPolicyAction::ToggleCachedPublicKeyId,
             FederationRequestPolicyAction::CycleRemoteHost,
-            FederationRequestPolicyAction::ToggleDateSkew,
+            FederationRequestPolicyAction::CycleDateSkew,
         ]);
     }
 
@@ -232,10 +248,13 @@ impl Model for FederationRequestPolicyModel {
             FederationRequestPolicyAction::CycleRemoteHost => {
                 next.remote_host = Self::cycle_remote_host(next.remote_host);
             }
-            FederationRequestPolicyAction::ToggleDateSkew => {
+            FederationRequestPolicyAction::CycleDateSkew => {
                 next.date_skew = match next.date_skew {
-                    DateSkewCase::Within => DateSkewCase::Outside,
-                    DateSkewCase::Outside => DateSkewCase::Within,
+                    DateSkewCase::Now => DateSkewCase::OldestAccepted,
+                    DateSkewCase::OldestAccepted => DateSkewCase::FarthestAheadAccepted,
+                    DateSkewCase::FarthestAheadAccepted => DateSkewCase::TooOld,
+                    DateSkewCase::TooOld => DateSkewCase::TooFarAhead,
+                    DateSkewCase::TooFarAhead => DateSkewCase::Now,
                 };
             }
         }
@@ -309,14 +328,14 @@ impl Model for FederationRequestPolicyModel {
             Property::always(
                 "within_skew_dates_are_accepted",
                 |_, state: &FederationRequestPolicyModelState| {
-                    state.date_skew != DateSkewCase::Within
+                    !state.date_skew.is_within()
                         || FederationRequestPolicyModel::date_within_skew(state)
                 },
             ),
             Property::always(
                 "outside_skew_dates_are_rejected",
                 |_, state: &FederationRequestPolicyModelState| {
-                    state.date_skew != DateSkewCase::Outside
+                    state.date_skew.is_within()
                         || !FederationRequestPolicyModel::date_within_skew(state)
                 },
             ),

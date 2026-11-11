@@ -2,7 +2,13 @@ use crate::federation::url::remote_http_url_scheme_allowed;
 
 pub const ACTIVITYPUB_REQUIRED_SIGNED_HEADERS: &[&str] = &["(request-target)", "date", "digest"];
 
-pub const ACTIVITYPUB_MAX_DATE_SKEW_MS: f64 = 12.0 * 60.0 * 60.0 * 1000.0;
+/// How old a signed request's `Date` may be: Mastodon's
+/// `SignatureVerification::EXPIRATION_WINDOW_LIMIT` (12 hours).
+pub const ACTIVITYPUB_MAX_DATE_AGE_MS: f64 = 12.0 * 60.0 * 60.0 * 1000.0;
+
+/// How far ahead of this server's clock a signed request's `Date` may be:
+/// Mastodon's `CLOCK_SKEW_MARGIN` (1 hour).
+pub const ACTIVITYPUB_MAX_DATE_AHEAD_MS: f64 = 60.0 * 60.0 * 1000.0;
 
 pub fn activitypub_signature_lists_required_headers(signed_headers: &[String]) -> bool {
     ACTIVITYPUB_REQUIRED_SIGNED_HEADERS
@@ -11,7 +17,8 @@ pub fn activitypub_signature_lists_required_headers(signed_headers: &[String]) -
 }
 
 pub fn activitypub_date_within_skew(parsed_ms: f64, now_ms: f64) -> bool {
-    (now_ms - parsed_ms).abs() <= ACTIVITYPUB_MAX_DATE_SKEW_MS
+    parsed_ms >= now_ms - ACTIVITYPUB_MAX_DATE_AGE_MS
+        && parsed_ms <= now_ms + ACTIVITYPUB_MAX_DATE_AHEAD_MS
 }
 
 pub fn activitypub_key_id_matches_actor(
@@ -60,6 +67,30 @@ pub fn activitypub_host_header_matches_url_host(host_header: &str, url_host: &st
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn date_may_be_twelve_hours_old_but_only_one_hour_ahead() {
+        let now_ms = 1_000_000_000.0;
+        let hour_ms = 60.0 * 60.0 * 1000.0;
+        assert!(activitypub_date_within_skew(now_ms, now_ms));
+        assert!(activitypub_date_within_skew(
+            now_ms - 12.0 * hour_ms,
+            now_ms
+        ));
+        assert!(!activitypub_date_within_skew(
+            now_ms - 12.0 * hour_ms - 1.0,
+            now_ms
+        ));
+        assert!(activitypub_date_within_skew(now_ms + hour_ms, now_ms));
+        assert!(!activitypub_date_within_skew(
+            now_ms + hour_ms + 1.0,
+            now_ms
+        ));
+        assert!(!activitypub_date_within_skew(
+            now_ms + 2.0 * hour_ms,
+            now_ms
+        ));
+    }
 
     #[test]
     fn signature_headers_require_body_integrity_fields() {
