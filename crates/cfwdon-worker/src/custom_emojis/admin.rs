@@ -70,15 +70,17 @@ pub(crate) async fn admin_create_custom_emoji_response(
     let static_image = read_optional_static_image(&form).await?;
     let visible_in_picker =
         parse_optional_bool(form.get_field("visible_in_picker").as_deref())?.unwrap_or(true);
-    let draft = normalize_custom_emoji_upload(
+    let draft = match normalize_custom_emoji_upload(
         shortcode,
         bytes,
         content_type,
         visible_in_picker,
         form.get_field("category"),
         static_image,
-    )
-    .map_err(worker::Error::RustError)?;
+    ) {
+        Ok(draft) => draft,
+        Err(message) => return Response::error(message, 422),
+    };
 
     let created = create_custom_emoji(&db, &bucket, &config, draft).await?;
     Response::from_json(&created)
@@ -127,7 +129,10 @@ pub(crate) async fn admin_update_custom_emoji_response(
             visible_in_picker: parse_optional_bool(form.get_field("visible_in_picker").as_deref())?,
             category: form.get_field("category"),
         };
-        let image = read_optional_image_upload(&form).await?;
+        let image = match read_optional_image_upload(&form).await? {
+            Ok(image) => image,
+            Err(message) => return Response::error(message, 422),
+        };
         (request, image)
     };
 
@@ -186,11 +191,12 @@ pub(crate) async fn admin_delete_custom_emoji_response(
     }
 }
 
+/// The replacement image of an update, or the reason it is refused.
 async fn read_optional_image_upload(
     form: &worker::FormData,
-) -> Result<Option<super::store::CustomEmojiUploadDraft>> {
+) -> Result<std::result::Result<Option<super::store::CustomEmojiUploadDraft>, String>> {
     let Some(entry) = form.get("image") else {
-        return Ok(None);
+        return Ok(Ok(None));
     };
     let file = match entry {
         FormEntry::File(file) => file,
@@ -205,10 +211,10 @@ async fn read_optional_image_upload(
         worker::Error::RustError(format!("failed to read uploaded image: {error}"))
     })?;
     let static_image = read_optional_static_image(form).await?;
-    let draft =
+    Ok(
         normalize_custom_emoji_upload(String::new(), bytes, content_type, true, None, static_image)
-            .map_err(worker::Error::RustError)?;
-    Ok(Some(draft))
+            .map(Some),
+    )
 }
 
 async fn read_optional_static_image(form: &worker::FormData) -> Result<Option<(Vec<u8>, String)>> {
