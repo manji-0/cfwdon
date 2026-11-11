@@ -103,6 +103,10 @@ Route-level Mastodon coverage is tracked in `docs/mastodon-api-compat/`. That in
 
 ActivityPub delivery is queue-oriented. Local public/unlisted creates, deletes, interactions, profile updates, poll updates, and follow-related activities enqueue outbound rows in D1. A Cloudflare Queue (`OUTBOX_PROCESS_QUEUE`) is kicked after successful write requests, from `POST /internal/outbox/process`, and from the hourly cron when work is pending; the queue consumer then fans out and delivers. Delivery rows are keyed to avoid duplicate target fan-out, and retry state is persisted in D1.
 
+### Instance Domain Blocks
+
+Admins add instance domain blocks through `/api/cfwdon/admin/domain-blocks`. Each block acts as a Mastodon `suspend` block on the domain and every subdomain: a block on `example.com` also covers `a.example.com`. The Worker refuses inbox deliveries signed by or attributed to a suspended host with `403` before any key fetch. It skips outbound deliveries to a suspended host as terminal failures, and `url_guard` refuses remote fetches to one. `GET /api/v1/instance/domain_blocks` lists the blocks publicly, with each domain's SHA-256 digest and `severity: "suspend"`. Each isolate caches the blocked set for 60 seconds, so another isolate applies an admin edit within that time.
+
 ## Operational Plan
 <!-- constrained-by ../reference/configuration.md#cloudflare-bindings -->
 <!-- constrained-by ./web-ui-foreground-resume.md -->

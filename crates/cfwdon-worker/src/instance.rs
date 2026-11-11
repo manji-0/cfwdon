@@ -6,13 +6,14 @@ mod trending_links;
 use crate::custom_emojis::{config_with_resolved_custom_emojis, list_custom_emojis};
 use crate::d1_metrics::d1_pressure_load_shed_response;
 use crate::db_session::{bind_request_d1, open_bound_request_session, with_d1_bookmark};
+use crate::federation::suspended_instance_domains;
 use crate::identity::configured_instance_languages;
 use crate::policy_documents::{build_default_terms_of_service_document, configured_html_document};
 use crate::public_endpoint_cache::{
     PUBLIC_CACHE_INSTANCE_ACTIVITY, load_public_endpoint_cache, store_public_endpoint_cache,
 };
 use crate::request_utils::offset_link_header;
-use crate::response_cache::{cache_instance_document, cached_instance_document};
+use crate::response_cache::{cache_instance_document, cached_instance_document, sha256_hex};
 use crate::response_utils::{CACHE_TTL_INSTANCE_SUMMARY, CACHE_TTL_TRENDS, cache_public_response};
 use crate::runtime_config::{load_config, load_config_from_env};
 use crate::store::instance::{
@@ -304,12 +305,32 @@ pub(crate) async fn instance_terms_of_service_version_response(
     instance_terms_of_service_response(ctx).await
 }
 
-pub(crate) async fn instance_domain_blocks_response(_ctx: RouteContext<()>) -> Result<Response> {
-    instance_domain_blocks_response_direct()
+/// Mastodon `DomainBlock` entity. Every instance domain block is a `suspend`
+/// and the table keeps no public comment.
+#[derive(Debug, serde::Serialize)]
+struct PublicDomainBlock<'a> {
+    domain: &'a str,
+    digest: String,
+    severity: &'static str,
+    comment: Option<String>,
 }
 
-pub(crate) fn instance_domain_blocks_response_direct() -> Result<Response> {
-    cache_public_response(Response::from_json(&Vec::<serde_json::Value>::new())?, 300)
+fn public_domain_blocks(domains: &[String]) -> Vec<PublicDomainBlock<'_>> {
+    domains
+        .iter()
+        .map(|domain| PublicDomainBlock {
+            domain,
+            digest: sha256_hex(domain.as_bytes()),
+            severity: "suspend",
+            comment: None,
+        })
+        .collect()
+}
+
+/// Public like tstodon's: there is no setting to hide moderated servers.
+pub(crate) async fn instance_domain_blocks_response() -> Result<Response> {
+    let domains = suspended_instance_domains().await?;
+    cache_public_response(Response::from_json(&public_domain_blocks(&domains))?, 300)
 }
 
 pub(crate) async fn instance_languages_response(ctx: RouteContext<()>) -> Result<Response> {

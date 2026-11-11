@@ -1,3 +1,4 @@
+use super::ensure_remote_host_not_suspended;
 use cfwdon_domain::{
     RemoteDnsResolutionIssue, RemoteUrlPolicyIssue, parse_dns_answer_ips,
     remote_hostname_dns_resolution_allowed, remote_url_policy_for_ip, remote_url_policy_from_parts,
@@ -125,6 +126,7 @@ pub(crate) async fn validate_remote_fetch_url(url: &Url) -> Result<()> {
             if let Err(issue) = remote_url_policy_from_parts(url.scheme(), host, has_userinfo) {
                 return Err(remote_url_policy_error(issue));
             }
+            ensure_remote_host_not_suspended(host).await?;
             validate_remote_hostname_resolution(host).await
         }
         Some(Host::Ipv4(v4)) => {

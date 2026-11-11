@@ -288,8 +288,8 @@ fn instance_router() -> Router<'static, ()> {
         .get_async("/api/v1/instance/rules", |_req, ctx| async move {
             instance_rules_response(ctx).await
         })
-        .get_async("/api/v1/instance/domain_blocks", |_req, ctx| async move {
-            instance_domain_blocks_response(ctx).await
+        .get_async("/api/v1/instance/domain_blocks", |_req, _ctx| async move {
+            instance_domain_blocks_response().await
         })
         .get_async(
             "/api/v1/instance/extended_description",

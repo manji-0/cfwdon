@@ -7,7 +7,8 @@ use super::{
     reconcile_outbound_activity_terminal_failure, requeue_stale_in_flight_deliveries,
     reschedule_outbound_activity, reschedule_outbox_delivery,
 };
-use crate::domain_blocks::{delivery_inbox_blocked_by_domains, list_all_account_domain_blocks};
+use crate::domain_blocks::list_delivery_blocked_domains;
+use crate::federation::url_host_within_blocked_domains;
 use crate::http::send_signed_activity;
 use crate::observability::log_federation_event;
 use crate::tracked_d1::D1Database;
@@ -80,7 +81,7 @@ async fn blocked_domains_for_account(
     blocked_domains_cache: &mut HashMap<String, Vec<String>>,
 ) -> Result<Vec<String>> {
     if !blocked_domains_cache.contains_key(account_id) {
-        let blocked = list_all_account_domain_blocks(db, account_id).await?;
+        let blocked = list_delivery_blocked_domains(db, account_id).await?;
         blocked_domains_cache.insert(account_id.to_owned(), blocked);
     }
     Ok(blocked_domains_cache
@@ -137,7 +138,7 @@ async fn process_claimed_target_outbox_deliveries(
         };
         let blocked_domains =
             blocked_domains_for_account(db, &delivery.account_id, blocked_domains_cache).await?;
-        if delivery_inbox_blocked_by_domains(&target_inbox, &blocked_domains) {
+        if url_host_within_blocked_domains(&target_inbox, &blocked_domains) {
             log_federation_event(
                 "outbox_delivery_skipped",
                 "skipped",
@@ -301,7 +302,7 @@ async fn process_claimed_outbound_activities(
         };
         let blocked_domains =
             blocked_domains_for_account(db, &delivery.account_id, blocked_domains_cache).await?;
-        if delivery_inbox_blocked_by_domains(&delivery.target_inbox, &blocked_domains) {
+        if url_host_within_blocked_domains(&delivery.target_inbox, &blocked_domains) {
             log_federation_event(
                 "outbox_delivery_skipped",
                 "skipped",
