@@ -337,20 +337,25 @@ pub const REFINEMENT_CATALOG: &[RefinementEntry] = &[
     },
     RefinementEntry {
         model: "registration_pipeline",
-        domain_module: "cfwdon_domain::account::registration",
-        implementation_sites: &["crates/cfwdon-worker/src/meta_placeholder_routes.rs"],
-        abstraction: "registration field inputs + pipeline stage",
+        domain_module: "cfwdon_domain::account::{registration, approval}",
+        implementation_sites: &[
+            "crates/cfwdon-worker/src/meta_placeholder_routes/account_registration.rs",
+            "crates/cfwdon-worker/src/oauth_store.rs::oauth_access_token_auth_from_joined_row",
+            "crates/cfwdon-worker/src/auth.rs::find_auth0_local_account_with_roles",
+            "crates/cfwdon-worker/src/admin_api/accounts.rs::review_account_response",
+        ],
+        abstraction: "registration field inputs + mode + IP decision + approval + pipeline stage",
         operations: &[
             OperationMapping {
                 model_action: "Validate",
-                domain_call: "ComposingRegistration::validate",
-                implementation_call: "account_registration_api_details",
-                worker_guard: "registration form submitted",
+                domain_call: "sign_up_approval / ComposingRegistration::validate",
+                implementation_call: "create_account_placeholder_response / account_registration_api_details",
+                worker_guard: "registration form submitted; a blocked address is refused first",
             },
             OperationMapping {
                 model_action: "Register",
-                domain_call: "finalize_registration_validation",
-                implementation_call: "insert_registered_account",
+                domain_call: "finalize_registration_validation / sign_up_approval",
+                implementation_call: "insert_registered_account (pending row in the same batch)",
                 worker_guard: "validated registration and unique username/email",
             },
             OperationMapping {
@@ -358,6 +363,18 @@ pub const REFINEMENT_CATALOG: &[RefinementEntry] = &[
                 domain_call: "RegisteredAccount::provision",
                 implementation_call: "store_account_password / issue_oauth_access_token",
                 worker_guard: "account row created",
+            },
+            OperationMapping {
+                model_action: "Approve",
+                domain_call: "AccountApproval::review(Approve)",
+                implementation_call: "approve_pending_account",
+                worker_guard: "admin; account pending (conditional DELETE of the pending row)",
+            },
+            OperationMapping {
+                model_action: "Reject",
+                domain_call: "AccountApproval::review(Reject)",
+                implementation_call: "reject_pending_account",
+                worker_guard: "admin; account pending (conditional DELETE of the account)",
             },
         ],
     },

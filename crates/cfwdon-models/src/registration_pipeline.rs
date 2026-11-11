@@ -1,7 +1,8 @@
 use cfwdon_domain::{
-    AccountId, AccountKeyMaterial, ComposingRegistration, LocalAccount, QuoteApprovalPolicy,
-    RegistrationEvent, RegistrationFieldIssue, RegistrationUniquenessFacts,
-    RegistrationValidationErrors, Visibility, registration_uniqueness_errors,
+    AccountApproval, AccountId, AccountKeyMaterial, ApprovalReview, ComposingRegistration,
+    IpSignUpDecision, LocalAccount, QuoteApprovalPolicy, RegistrationEvent, RegistrationFieldIssue,
+    RegistrationUniquenessFacts, RegistrationValidationErrors, RegistrationsMode, ReviewOutcome,
+    Visibility, registration_uniqueness_errors, sign_up_approval,
 };
 use stateright::{Checker, Model, Property};
 
@@ -11,10 +12,15 @@ pub(crate) struct RegistrationPipelineModel;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum RegistrationStage {
     Composing,
+    /// The client address is in a `sign_up_block` range: refused before the
+    /// form is read.
+    Refused,
     Validated,
     ValidationFailed,
     Registered,
     Provisioned,
+    /// An admin rejected the pending account, which deleted it.
+    Rejected,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -34,6 +40,12 @@ pub(crate) struct RegistrationPipelineModelState {
     pub(crate) agreement: bool,
     pub(crate) username_taken: bool,
     pub(crate) email_taken: bool,
+    pub(crate) mode: RegistrationsMode,
+    pub(crate) ip: IpSignUpDecision,
+    /// Set when the account is inserted; `None` before and after rejection.
+    pub(crate) approval: Option<AccountApproval>,
+    /// An admin approved the account.
+    pub(crate) reviewed: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -47,6 +59,8 @@ pub(crate) enum RegistrationPipelineAction {
     Validate,
     Register,
     Provision,
+    Approve,
+    Reject,
 }
 
 impl RegistrationPipelineModel {
@@ -180,6 +194,7 @@ pub(crate) fn registration_pipeline_register_allowed(
     state: &RegistrationPipelineModelState,
 ) -> bool {
     state.stage == RegistrationStage::Validated
+        && registration_pipeline_sign_up_approval(state).is_some()
         && registration_pipeline_validation_errors(state).is_empty()
         && registration_pipeline_uniqueness_errors(state).is_empty()
 }
@@ -192,15 +207,45 @@ pub(crate) fn registration_pipeline_finalize_allowed(
         && registration_pipeline_uniqueness_errors(state).is_empty()
 }
 
-/// Mirrors `account_registration_api_details` success gate.
+/// Mirrors the sign-up handler: the IP decision refuses a blocked address
+/// before the form is read, then `account_registration_api_details` validates.
 pub(crate) fn apply_registration_pipeline_validate(
     state: &RegistrationPipelineModelState,
 ) -> RegistrationStage {
-    if registration_pipeline_validation_errors(state).is_empty() {
+    if registration_pipeline_sign_up_approval(state).is_none() {
+        RegistrationStage::Refused
+    } else if registration_pipeline_validation_errors(state).is_empty() {
         RegistrationStage::Validated
     } else {
         RegistrationStage::ValidationFailed
     }
+}
+
+/// `sign_up_approval` for the state's mode and address; `None` when refused.
+pub(crate) fn registration_pipeline_sign_up_approval(
+    state: &RegistrationPipelineModelState,
+) -> Option<AccountApproval> {
+    sign_up_approval(state.mode, state.ip).ok()
+}
+
+/// Whether a credential for the account authorizes API requests: the token
+/// row and the Auth0 sign-in both decode a pending account as no account.
+pub(crate) fn registration_pipeline_api_access(state: &RegistrationPipelineModelState) -> bool {
+    state.stage == RegistrationStage::Provisioned
+        && state
+            .approval
+            .is_some_and(AccountApproval::grants_api_access)
+}
+
+/// The admin review the account allows, as the approve/reject handlers ask it.
+pub(crate) fn registration_pipeline_review(
+    state: &RegistrationPipelineModelState,
+    review: ApprovalReview,
+) -> Option<ReviewOutcome> {
+    if state.stage != RegistrationStage::Provisioned {
+        return None;
+    }
+    state.approval?.review(review)
 }
 
 pub(crate) fn registration_pipeline_provisioned_account(
@@ -244,15 +289,23 @@ impl Model for RegistrationPipelineModel {
                     for agreement in [false, true] {
                         for username_taken in [false, true] {
                             for email_taken in [false, true] {
-                                states.push(RegistrationPipelineModelState {
-                                    stage: RegistrationStage::Composing,
-                                    username,
-                                    email,
-                                    password_present,
-                                    agreement,
-                                    username_taken,
-                                    email_taken,
-                                });
+                                for mode in RegistrationsMode::ALL {
+                                    for ip in IpSignUpDecision::ALL {
+                                        states.push(RegistrationPipelineModelState {
+                                            stage: RegistrationStage::Composing,
+                                            username,
+                                            email,
+                                            password_present,
+                                            agreement,
+                                            username_taken,
+                                            email_taken,
+                                            mode,
+                                            ip,
+                                            approval: None,
+                                            reviewed: false,
+                                        });
+                                    }
+                                }
                             }
                         }
                     }
@@ -284,7 +337,17 @@ impl Model for RegistrationPipelineModel {
             RegistrationStage::Registered => {
                 actions.push(RegistrationPipelineAction::Provision);
             }
-            RegistrationStage::ValidationFailed | RegistrationStage::Provisioned => {}
+            RegistrationStage::Provisioned => {
+                if registration_pipeline_review(state, ApprovalReview::Approve).is_some() {
+                    actions.push(RegistrationPipelineAction::Approve);
+                }
+                if registration_pipeline_review(state, ApprovalReview::Reject).is_some() {
+                    actions.push(RegistrationPipelineAction::Reject);
+                }
+            }
+            RegistrationStage::Refused
+            | RegistrationStage::ValidationFailed
+            | RegistrationStage::Rejected => {}
         }
     }
 
@@ -339,12 +402,23 @@ impl Model for RegistrationPipelineModel {
                     return None;
                 }
                 next.stage = RegistrationStage::Registered;
+                next.approval = registration_pipeline_sign_up_approval(state);
             }
             RegistrationPipelineAction::Provision => {
                 if state.stage != RegistrationStage::Registered {
                     return None;
                 }
                 next.stage = RegistrationStage::Provisioned;
+            }
+            RegistrationPipelineAction::Approve => {
+                registration_pipeline_review(state, ApprovalReview::Approve)?;
+                next.approval = Some(AccountApproval::Approved);
+                next.reviewed = true;
+            }
+            RegistrationPipelineAction::Reject => {
+                registration_pipeline_review(state, ApprovalReview::Reject)?;
+                next.stage = RegistrationStage::Rejected;
+                next.approval = None;
             }
         }
 
@@ -424,6 +498,87 @@ impl Model for RegistrationPipelineModel {
                     }
                     let account = Self::provisioned_account(state);
                     account.display_name() == account.username()
+                },
+            ),
+            Property::always(
+                "refused_only_for_a_blocked_address",
+                |_, state: &RegistrationPipelineModelState| {
+                    state.stage != RegistrationStage::Refused
+                        || state.ip == IpSignUpDecision::Blocked
+                },
+            ),
+            Property::always(
+                "blocked_address_never_creates_an_account",
+                |_, state: &RegistrationPipelineModelState| {
+                    state.ip != IpSignUpDecision::Blocked
+                        || !matches!(
+                            state.stage,
+                            RegistrationStage::Registered
+                                | RegistrationStage::Provisioned
+                                | RegistrationStage::Rejected
+                        )
+                },
+            ),
+            Property::always(
+                "held_sign_up_is_created_pending",
+                |_, state: &RegistrationPipelineModelState| {
+                    let needs_approval = state.mode == RegistrationsMode::Approved
+                        || state.ip == IpSignUpDecision::RequiresApproval;
+                    state.stage != RegistrationStage::Registered
+                        || state.approval
+                            == Some(if needs_approval {
+                                AccountApproval::Pending
+                            } else {
+                                AccountApproval::Approved
+                            })
+                },
+            ),
+            Property::always(
+                "pending_account_has_no_api_access",
+                |_, state: &RegistrationPipelineModelState| {
+                    state.approval != Some(AccountApproval::Pending)
+                        || !registration_pipeline_api_access(state)
+                },
+            ),
+            Property::always(
+                "api_access_needs_open_sign_up_or_review",
+                |_, state: &RegistrationPipelineModelState| {
+                    !registration_pipeline_api_access(state)
+                        || state.reviewed
+                        || (state.mode == RegistrationsMode::Open
+                            && state.ip == IpSignUpDecision::Open)
+                },
+            ),
+            Property::always(
+                "rejected_account_is_gone",
+                |_, state: &RegistrationPipelineModelState| {
+                    state.stage != RegistrationStage::Rejected
+                        || (state.approval.is_none() && !registration_pipeline_api_access(state))
+                },
+            ),
+            Property::sometimes(
+                "pending_account_reachable",
+                |_, state: &RegistrationPipelineModelState| {
+                    state.stage == RegistrationStage::Provisioned
+                        && state.approval == Some(AccountApproval::Pending)
+                },
+            ),
+            Property::sometimes(
+                "approved_after_review_reachable",
+                |_, state: &RegistrationPipelineModelState| {
+                    state.reviewed && registration_pipeline_api_access(state)
+                },
+            ),
+            Property::sometimes(
+                "rejection_reachable",
+                |_, state: &RegistrationPipelineModelState| {
+                    state.stage == RegistrationStage::Rejected
+                },
+            ),
+            Property::sometimes(
+                "refusal_reachable",
+                |_, state: &RegistrationPipelineModelState| {
+                    state.stage == RegistrationStage::Refused
                 },
             ),
             Property::sometimes(

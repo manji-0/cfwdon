@@ -16,13 +16,13 @@ pub mod status;
 pub mod transition;
 
 pub use account::{
-    AccessEmail, AccessEmailError, AccessProvisionError, AccessProvisionIntent, AccountHandle,
-    AccountKeyMaterial, ComposingAccessProvision, ComposingRegistration, LocalAccount,
-    LocalAccountRecord, ProfileField, RegisteringAccount, RegistrationEvent,
-    RegistrationFieldIssue, RegistrationIntent, RegistrationUniquenessFacts,
-    RegistrationValidationErrors, RegistrationValidationField, Username, UsernameError,
-    finalize_registration_validation, registration_field_issue_message,
-    registration_uniqueness_errors,
+    AccessEmail, AccessEmailError, AccessProvisionError, AccessProvisionIntent, AccountApproval,
+    AccountHandle, AccountKeyMaterial, ApprovalReview, ComposingAccessProvision,
+    ComposingRegistration, LocalAccount, LocalAccountRecord, ProfileField, RegisteringAccount,
+    RegistrationEvent, RegistrationFieldIssue, RegistrationIntent, RegistrationUniquenessFacts,
+    RegistrationValidationErrors, RegistrationValidationField, RegistrationsMode, ReviewOutcome,
+    SignUpRefused, Username, UsernameError, finalize_registration_validation,
+    registration_field_issue_message, registration_uniqueness_errors, sign_up_approval,
 };
 pub use delivery::{
     DELIVERY_MAX_ATTEMPTS, DeliveryAttemptOutcome, FollowInboxResponse,

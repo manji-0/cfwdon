@@ -177,7 +177,7 @@ pub fn strictest_ip_block(
 }
 
 /// What a sign-up from an address may do.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum IpSignUpDecision {
     Open,
     RequiresApproval,
@@ -185,6 +185,8 @@ pub enum IpSignUpDecision {
 }
 
 impl IpSignUpDecision {
+    pub const ALL: [Self; 3] = [Self::Open, Self::RequiresApproval, Self::Blocked];
+
     pub fn for_block(block: Option<IpBlockSeverity>) -> Self {
         match block {
             None => Self::Open,
