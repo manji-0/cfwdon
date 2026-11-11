@@ -7,6 +7,7 @@ use crate::response::media_object_url;
 use crate::store::media::log_r2_operation;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::{AppConfig, CustomEmoji, is_custom_emoji_shortcode};
+use cfwdon_domain::strip_upload_metadata;
 use serde::Deserialize;
 use std::cell::RefCell;
 use worker::{Bucket, HttpMetadata, Result, d1::D1Type};
@@ -403,8 +404,11 @@ pub(crate) fn normalize_custom_emoji_upload(
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty());
 
+    // Emoji are served to everyone, so they lose their metadata as uploads do.
+    let bytes = stripped_emoji_image(&content_type, bytes)?;
     let (static_bytes, static_content_type, static_extension) =
         resolve_static_emoji_upload(&bytes, &content_type, extension, static_image)?;
+    let static_bytes = stripped_emoji_image(&static_content_type, static_bytes)?;
 
     Ok(CustomEmojiUploadDraft {
         shortcode,
@@ -417,6 +421,14 @@ pub(crate) fn normalize_custom_emoji_upload(
         visible_in_picker,
         category,
     })
+}
+
+fn stripped_emoji_image(
+    content_type: &str,
+    bytes: Vec<u8>,
+) -> std::result::Result<Vec<u8>, String> {
+    strip_upload_metadata(content_type, bytes)
+        .map_err(|error| format!("image is not a readable {content_type} file: {error}"))
 }
 
 fn resolve_static_emoji_upload(
@@ -590,6 +602,37 @@ mod tests {
             visible_in_picker: 1,
             category: None,
         }
+    }
+
+    #[test]
+    fn custom_emoji_upload_is_stored_without_its_metadata() {
+        let png = include_bytes!("../../../cfwdon-domain/src/media_metadata/fixtures/photo.png");
+        let has_gps = |bytes: &[u8]| bytes.windows(10).any(|w| w == b"secret-gps");
+        assert!(has_gps(png));
+
+        let draft = normalize_custom_emoji_upload(
+            "blobcat".to_owned(),
+            png.to_vec(),
+            "image/png".to_owned(),
+            true,
+            None,
+            Some((png.to_vec(), "image/png".to_owned())),
+        )
+        .expect("a PNG emoji is accepted");
+
+        assert!(draft.bytes.starts_with(b"\x89PNG") && !has_gps(&draft.bytes));
+        assert!(draft.static_bytes.starts_with(b"\x89PNG") && !has_gps(&draft.static_bytes));
+        assert!(
+            normalize_custom_emoji_upload(
+                "blobcat".to_owned(),
+                b"not a png".to_vec(),
+                "image/png".to_owned(),
+                true,
+                None,
+                None,
+            )
+            .is_err()
+        );
     }
 
     #[test]
