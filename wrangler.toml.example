@@ -72,6 +72,13 @@ MEDIA_PUBLIC_BASE_URL = "https://media.example.com"
 # and collections need an HTTP signature, and this server signs its own fetches.
 # AUTHORIZED_FETCH = "true"
 
+# Registrations mode (Mastodon's registrations_mode): "approved" (default:
+# every API sign-up waits for an admin), "open" (sign-ups work at once), or
+# "none" (no sign-ups). Unset, blank, and unknown values mean "approved"; an
+# unknown value is also logged. Approve the first admin with
+# `just approve-account --remote <username>`.
+# REGISTRATIONS_MODE = "open"
+
 # Rate limits (Mastodon's Rack::Attack throttles) are on by default.
 # RATE_LIMITS_ENABLED = "false" turns them off; RATE_LIMITS overrides buckets.
 # RATE_LIMITS = '{"api_ip": {"limit": 600, "period": 300}, "inbox_domain": false}'

@@ -1,5 +1,6 @@
 use super::LocalAccount;
 use super::status_mentions::StoredMentionsPreload;
+use crate::auth::APPROVED_ONLY;
 use crate::content_helpers::extract_account_handles_from_text;
 use crate::db_utils::{d1_results, json_string_array, sql_in_json_each, unique_ordered_refs};
 use crate::identity::{actor_url, remote_account_rest_id};
@@ -190,11 +191,14 @@ fn remote_mention_document(actor: &RemoteActorRow) -> serde_json::Value {
     })
 }
 
+/// Pending accounts are left out, as `find_account_by_username` leaves them
+/// out: a mention of one renders as plain text, the same as an unknown name.
 fn mention_local_accounts_sql() -> String {
     format!(
         "SELECT id, username, access_email, display_name, bio_html, bio_text, fields_json, locked, bot, discoverable, default_post_visibility, default_quote_policy, default_sensitive, default_language, avatar_object_key, avatar_content_type, header_object_key, header_content_type, '' AS private_key_jwk, public_key_pem, created_at
          FROM accounts
-         WHERE lower(username) {}",
+         WHERE lower(username) {}
+           AND {APPROVED_ONLY}",
         sql_in_json_each(1)
     )
 }
@@ -285,6 +289,7 @@ mod tests {
         MentionLookupKeys, mention_local_accounts_sql, mention_lookup_keys,
         mention_remote_acct_key, mention_remote_actors_sql, mention_remote_pair,
     };
+    use crate::auth::APPROVED_ONLY;
     use cfwdon_domain::AccountHandle;
 
     #[test]
@@ -332,6 +337,11 @@ mod tests {
 
         assert!(sql.contains("WHERE lower(username) IN (SELECT value FROM json_each(?1))"));
         assert!(!sql.contains("?2"));
+    }
+
+    #[test]
+    fn mention_local_accounts_sql_leaves_pending_accounts_out() {
+        assert!(mention_local_accounts_sql().contains(&format!("AND {APPROVED_ONLY}")));
     }
 
     #[test]

@@ -212,6 +212,10 @@ async fn rate_limit_caller(req: &Request, env: &Env, config: &AppConfig) -> Rate
             account_id: account.id().to_owned(),
             token_id: credential_hash.clone(),
         },
+        Ok(LocalApiAuthentication::PendingApproval(pending)) => RateLimitCaller::Account {
+            account_id: pending.account.id().to_owned(),
+            token_id: credential_hash.clone(),
+        },
         Ok(LocalApiAuthentication::AppToken) => RateLimitCaller::Application {
             token_id: credential_hash.clone(),
         },

@@ -1,6 +1,6 @@
 use crate::time_html::now_unix_timestamp;
 use crate::tracked_d1::D1Database;
-use cfwdon_domain::{LocalAccount, LocalAccountRecord};
+use cfwdon_domain::{AccountApproval, LocalAccount, LocalAccountRecord};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use url::Url;
@@ -231,10 +231,20 @@ pub(crate) struct OAuthAppRow {
     pub(crate) client_secret_expires_at: i64,
 }
 
+/// The local account a credential names, and whether its owner may use it
+/// yet. Credential lookups return this so no caller can act as a pending
+/// account without matching on its approval.
+#[derive(Clone, Debug)]
+pub(crate) struct CredentialAccount {
+    pub(crate) account: LocalAccount,
+    pub(crate) approval: AccountApproval,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct OAuthAccessTokenWithAccount {
     pub(crate) token: OAuthAccessTokenRow,
-    pub(crate) account: Option<LocalAccount>,
+    /// `None` when the token names no account row.
+    pub(crate) account: Option<CredentialAccount>,
 }
 
 pub(crate) fn oauth_access_token_has_any_scope_json(scopes_json: &str, scopes: &[&str]) -> bool {
@@ -370,9 +380,11 @@ pub(crate) async fn find_oauth_access_token_with_account_by_column(
                     a.header_content_type,
                     '' AS private_key_jwk,
                     a.public_key_pem,
-                    a.created_at
+                    a.created_at,
+                    p.account_id AS pending_account_id
              FROM oauth_access_tokens t
              LEFT JOIN accounts a ON a.id = t.account_id
+             LEFT JOIN pending_account_approvals p ON p.account_id = a.id
              WHERE {column} = ?1
                AND (t.expires_at IS NULL OR t.expires_at > ?2){legacy_guard}
              LIMIT 1"
@@ -401,16 +413,25 @@ pub(crate) fn oauth_access_token_auth_from_joined_row(
     let token = serde_json::from_value::<OAuthAccessTokenRow>(row.clone()).map_err(|error| {
         worker::Error::RustError(format!("failed to decode OAuth access token row: {error}"))
     })?;
+    let approval = if row
+        .get("pending_account_id")
+        .is_some_and(|value| !value.is_null())
+    {
+        AccountApproval::Pending
+    } else {
+        AccountApproval::Approved
+    };
     let account = match row.get("id").and_then(serde_json::Value::as_str) {
-        Some(_) => Some(
-            serde_json::from_value::<LocalAccountRecord>(row)
+        Some(_) => Some(CredentialAccount {
+            account: serde_json::from_value::<LocalAccountRecord>(row)
                 .map(LocalAccount::from_record)
                 .map_err(|error| {
                     worker::Error::RustError(format!(
                         "failed to decode OAuth access token account row: {error}"
                     ))
                 })?,
-        ),
+            approval,
+        }),
         None => None,
     };
 

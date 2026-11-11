@@ -12,7 +12,7 @@ pub(crate) use request_parsing::*;
 pub(crate) use store::*;
 
 use self::store::{insert_report, list_reports};
-use crate::auth::find_account_by_email;
+use crate::auth::find_approved_account_by_email;
 use cfwdon_core::AppConfig;
 use serde::Deserialize;
 
@@ -79,7 +79,7 @@ pub(crate) async fn notify_admins_of_report(
     target_account_id: &str,
 ) -> Result<()> {
     for admin_email in &config.admin_emails {
-        if let Some(admin) = find_account_by_email(db, admin_email).await? {
+        if let Some(admin) = find_approved_account_by_email(db, admin_email).await? {
             let _ = send_push_notification(
                 db,
                 config,

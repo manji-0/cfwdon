@@ -261,6 +261,17 @@ Progress: `SELECT COUNT(*) FROM media_metadata_backfill` on the remote database;
 
 Admin routes require an Auth0 token whose roles include one of `AUTH0_ADMIN_ROLES` (`fedi-admin` in the committed config), or an account the config marks as admin. If Cloudflare Access is in front, see the [Access guide](cloudflare-access-configuration.md) for which paths must stay open (ActivityPub, `/.well-known/`, the media domain). If an admin is locked out, check the role in Auth0 and the `AUTH0_ADMIN_ROLES` var before touching the database; see the [Auth0 guide](auth0-configuration.md).
 
+### Approving Accounts Without The Admin UI
+<!-- constrained-by launch-checklist.md#the-first-admin -->
+
+Admin routes need an approved account, so a pending account cannot approve itself, and an instance whose only admin is pending has nobody to approve it. Approve such an account from the repository root inside `nix develop`:
+
+```sh
+just approve-account --remote <username or e-mail>
+```
+
+The recipe runs `scripts/approve_account.sh`, which finds the account with `wrangler d1 execute`, prints it, and deletes its `pending_account_approvals` row, as `POST /api/v1/admin/accounts/:id/approve` does. Running it again is harmless. It refuses a value that is not a plain username or e-mail address, because `wrangler d1 execute` takes no bind parameters. `--local` targets the `just worker-dev` database. Check that the owner controls the account's e-mail first: sign-up e-mails are not verified, and an account whose e-mail is in `ADMIN_EMAILS` becomes an admin once approved. The [launch checklist](launch-checklist.md#the-first-admin) walks through creating and approving the first admin.
+
 ### Key Compromise And Secret Rotation
 
 - **Cloudflare API token or R2 keys:** revoke and reissue in the dashboard, then update the GitHub secrets for the backup workflow.
@@ -305,9 +316,18 @@ Failed deliveries older than the retention window are gone from D1, so investiga
 ### Deploying A New Version
 <!-- derived-from cloudflare-deploy.md#provisioning-steps -->
 
-1. `nix develop -c just ci`. This runs formatting, clippy for native and wasm, tests, `check_migrations.py`, `check_query_plans.py`, `check_module_layers.py`, the Web UI checks and `wrangler deploy --dry-run`.
+1. `nix develop -c just ci`. This runs formatting, clippy for native and wasm, tests, `check_migrations.py`, `check_query_plans.py`, `check_module_layers.py`, `check_pending_account_guard.py` (and its `--self-test`), the Web UI checks and `wrangler deploy --dry-run`.
 2. Apply migrations first: `wrangler d1 migrations apply DB --remote`.
 3. Build the UIs and `wrangler deploy` (steps 13 and 14 of the [deploy checklist](cloudflare-deploy.md#provisioning-steps)).
 4. Check `GET /api/v1/instance`, watch for `outbox_queue_processing_failed` and 5xx `api_request` events for ten minutes, and expect `stream_hub_websocket` `deploy_reset` as clients reconnect.
 
 To pause every D1 read and write while you work on the database, deploy with `--var CFWDON_MAINTENANCE:1` and remove it afterwards.
+
+### Upgrade Notes
+
+**Registration approval.** This release adds Mastodon's registration approval, and `REGISTRATIONS_MODE` now defaults to `approved`. Before it, every `POST /api/v1/accounts` sign-up was usable at once, and an Auth0 identity could create an account for an unknown e-mail through `POST /api/v1/statuses`.
+
+- If your instance should keep taking sign-ups without review, set `REGISTRATIONS_MODE = "open"` in `wrangler.toml` `[vars]` before you deploy. Otherwise every new sign-up waits for an admin.
+- `/api/v1/instance`, `/api/v2/instance`, and NodeInfo now report the mode: `approval_required` is `true` under the default, and `registrations` and `openRegistrations` are `false` only for `none`. Directories and apps read these fields.
+- Auth0 and Access sign-ins no longer create accounts. A user without an account signs up through `POST /api/v1/accounts` with the same e-mail address and is then approved; see [The First Admin](launch-checklist.md#the-first-admin).
+- Existing accounts stay approved: migration `133_pending_account_approvals.sql` creates the table empty.

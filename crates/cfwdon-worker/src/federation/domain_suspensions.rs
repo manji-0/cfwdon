@@ -45,6 +45,8 @@ pub(crate) struct CachedDomainBlock {
 pub(crate) struct InstanceDomainBlocks {
     blocks: Vec<CachedDomainBlock>,
     suspended: Rc<[String]>,
+    /// Some block has `severity: silence`.
+    has_silence_block: bool,
 }
 
 impl InstanceDomainBlocks {
@@ -54,11 +56,28 @@ impl InstanceDomainBlocks {
             .filter(|block| block.policy.severity == DomainBlockSeverity::Suspend)
             .map(|block| block.domain.clone())
             .collect();
-        Self { blocks, suspended }
+        let has_silence_block = blocks
+            .iter()
+            .any(|block| block.policy.severity == DomainBlockSeverity::Silence);
+        Self {
+            blocks,
+            suspended,
+            has_silence_block,
+        }
     }
 
     pub(crate) fn blocks(&self) -> &[CachedDomainBlock] {
         &self.blocks
+    }
+
+    /// Whether any block silences, so a silence check can skip loading its
+    /// authors' acct domains (and their follows) when none does. A `suspend`
+    /// block also silences, and like a `silence` block it can cover an author
+    /// through an acct domain only the stored actor row knows, so either kind
+    /// counts. Every author [`Self::restrictions_for_actor`] reports silenced
+    /// passes this check.
+    pub(crate) fn may_silence(&self) -> bool {
+        self.has_silence_block || !self.suspended.is_empty()
     }
 
     pub(crate) fn restrictions_for_host(&self, host: &str) -> DomainRestrictions {
@@ -267,6 +286,33 @@ mod tests {
             blocks.restrictions_for_actor("silenced.example", "https://ap.other.example/users/bob");
         assert!(delegated.silenced);
         assert!(blocks.restrictions_for_url("not a url") == Default::default());
+    }
+
+    #[test]
+    fn silence_check_is_skipped_only_when_no_author_can_be_silenced() {
+        let delegated = ("blocked.example", "https://ap.other.example/users/alice");
+        let by_host = ("other.example", "https://a.blocked.example/users/bob");
+        let unblocked = ("remote.example", "https://remote.example/users/carol");
+        assert!(!InstanceDomainBlocks::default().may_silence());
+        assert!(
+            !InstanceDomainBlocks::new(vec![block("blocked.example", DomainBlockSeverity::Noop)])
+                .may_silence()
+        );
+        for severity in [DomainBlockSeverity::Silence, DomainBlockSeverity::Suspend] {
+            let blocks = InstanceDomainBlocks::new(vec![block("blocked.example", severity)]);
+            assert!(blocks.may_silence(), "{severity:?}");
+            for (domain, actor_uri) in [delegated, by_host] {
+                assert!(
+                    blocks.restrictions_for_actor(domain, actor_uri).silenced,
+                    "{severity:?} silences {domain} {actor_uri}"
+                );
+            }
+            assert!(
+                !blocks
+                    .restrictions_for_actor(unblocked.0, unblocked.1)
+                    .silenced
+            );
+        }
     }
 
     #[test]

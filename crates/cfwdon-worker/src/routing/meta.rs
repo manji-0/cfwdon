@@ -1,4 +1,5 @@
 use crate::admin_api::{
+    admin_account_approve_response, admin_account_reject_response,
     admin_domain_block_create_response, admin_domain_block_delete_response,
     admin_domain_block_show_response, admin_domain_block_update_response,
     admin_domain_blocks_list_response, admin_ip_block_create_response,
@@ -98,6 +99,13 @@ pub(crate) fn add_meta_routes(router: Router<'static, ()>) -> Router<'static, ()
         })
         .delete_async("/api/v1/admin/custom_emojis/:id", |req, ctx| async move {
             admin_delete_custom_emoji_response(req, ctx).await
+        })
+        .post_async(
+            "/api/v1/admin/accounts/:id/approve",
+            |req, ctx| async move { admin_account_approve_response(req, ctx).await },
+        )
+        .post_async("/api/v1/admin/accounts/:id/reject", |req, ctx| async move {
+            admin_account_reject_response(req, ctx).await
         })
         .get_async("/api/v1/admin/domain_blocks", |req, ctx| async move {
             admin_domain_blocks_list_response(req, ctx).await

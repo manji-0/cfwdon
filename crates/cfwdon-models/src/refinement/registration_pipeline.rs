@@ -1,11 +1,15 @@
-use cfwdon_domain::{RegistrationEvent, finalize_registration_validation};
+use cfwdon_domain::{
+    AccountApproval, ApprovalReview, IpSignUpDecision, RegistrationEvent, RegistrationsMode,
+    RegistrationsModeSetting, ReviewOutcome, finalize_registration_validation, sign_up_approval,
+};
 
 use crate::refinement::verify::{assert_model_matches_domain, assert_worker_refinement};
 use crate::registration_pipeline::{
     RegistrationPipelineAction, RegistrationPipelineModel, RegistrationPipelineModelState,
     RegistrationStage, TextFieldInput, apply_registration_pipeline_validate,
-    registration_pipeline_composing, registration_pipeline_finalize_allowed,
-    registration_pipeline_provisioned_account, registration_pipeline_register_allowed,
+    registration_pipeline_api_access, registration_pipeline_composing,
+    registration_pipeline_finalize_allowed, registration_pipeline_provisioned_account,
+    registration_pipeline_register_allowed, registration_pipeline_review,
     registration_pipeline_uniqueness_facts, registration_pipeline_validation_errors,
 };
 use stateright::Model;
@@ -27,6 +31,45 @@ fn worker_register_succeeds(state: RegistrationPipelineModelState) -> bool {
     registration_pipeline_finalize_allowed(&state)
 }
 
+/// A `REGISTRATIONS_MODE` value that holds the setting.
+fn registrations_mode_var(setting: RegistrationsModeSetting) -> Option<&'static str> {
+    match setting {
+        RegistrationsModeSetting::Unset => None,
+        RegistrationsModeSetting::Named(mode) => Some(mode.as_str()),
+        RegistrationsModeSetting::Unrecognized => Some("aproved"),
+    }
+}
+
+/// Mirrors `registrations_mode_from_var` and
+/// `create_account_placeholder_response`: the mode parsed from the raw
+/// variable, then `sign_up_approval` with the client's IP decision, before the
+/// form is read.
+fn worker_sign_up_approval(state: RegistrationPipelineModelState) -> Option<AccountApproval> {
+    let mode = RegistrationsModeSetting::parse(registrations_mode_var(state.setting)).mode();
+    sign_up_approval(mode, state.ip).ok()
+}
+
+/// Mirrors `review_account_response`: the domain review of the account's
+/// approval, then a write conditional on the pending row.
+fn worker_review(
+    state: RegistrationPipelineModelState,
+    review: ApprovalReview,
+) -> Option<ReviewOutcome> {
+    if state.stage != RegistrationStage::Provisioned {
+        return None;
+    }
+    state.approval?.review(review)
+}
+
+/// Mirrors `oauth_access_token_auth_from_joined_row` and the Auth0 sign-in:
+/// an account with a pending row decodes as no account.
+fn worker_api_access(state: RegistrationPipelineModelState) -> bool {
+    state.stage == RegistrationStage::Provisioned
+        && state
+            .approval
+            .is_some_and(AccountApproval::grants_api_access)
+}
+
 fn worker_allows(
     state: RegistrationPipelineModelState,
     action: RegistrationPipelineAction,
@@ -35,6 +78,12 @@ fn worker_allows(
         RegistrationPipelineAction::Validate => state.stage == RegistrationStage::Composing,
         RegistrationPipelineAction::Register => registration_pipeline_register_allowed(&state),
         RegistrationPipelineAction::Provision => state.stage == RegistrationStage::Registered,
+        RegistrationPipelineAction::Approve => {
+            worker_review(state, ApprovalReview::Approve).is_some()
+        }
+        RegistrationPipelineAction::Reject => {
+            worker_review(state, ApprovalReview::Reject).is_some()
+        }
         _ => false,
     }
 }
@@ -49,13 +98,28 @@ fn worker_effect(
 
     match action {
         RegistrationPipelineAction::Validate => {
-            state.stage = apply_registration_pipeline_validate(&state);
+            state.stage = if worker_sign_up_approval(state).is_none() {
+                RegistrationStage::Refused
+            } else if worker_validate_succeeds(state) {
+                RegistrationStage::Validated
+            } else {
+                RegistrationStage::ValidationFailed
+            };
         }
         RegistrationPipelineAction::Register => {
             state.stage = RegistrationStage::Registered;
+            state.approval = worker_sign_up_approval(state);
         }
         RegistrationPipelineAction::Provision => {
             state.stage = RegistrationStage::Provisioned;
+        }
+        RegistrationPipelineAction::Approve => {
+            state.approval = Some(AccountApproval::Approved);
+            state.reviewed = true;
+        }
+        RegistrationPipelineAction::Reject => {
+            state.stage = RegistrationStage::Rejected;
+            state.approval = None;
         }
         _ => {}
     }
@@ -73,6 +137,9 @@ fn domain_step(
 fn worker_states() -> Vec<RegistrationPipelineModelState> {
     let mut states = RegistrationPipelineModel.init_states();
     for state in RegistrationPipelineModel.init_states() {
+        let Some(approval) = worker_sign_up_approval(state) else {
+            continue;
+        };
         if registration_pipeline_validation_errors(&state).is_empty() {
             let mut validated = state;
             validated.stage = RegistrationStage::Validated;
@@ -81,7 +148,12 @@ fn worker_states() -> Vec<RegistrationPipelineModelState> {
             if registration_pipeline_register_allowed(&validated) {
                 let mut registered = validated;
                 registered.stage = RegistrationStage::Registered;
+                registered.approval = Some(approval);
                 states.push(registered);
+
+                let mut provisioned = registered;
+                provisioned.stage = RegistrationStage::Provisioned;
+                states.push(provisioned);
             }
         }
     }
@@ -103,7 +175,13 @@ pub(crate) fn check_registration_pipeline_refinement() {
                 }
             }
             RegistrationStage::Registered => vec![RegistrationPipelineAction::Provision],
-            RegistrationStage::ValidationFailed | RegistrationStage::Provisioned => Vec::new(),
+            RegistrationStage::Provisioned => vec![
+                RegistrationPipelineAction::Approve,
+                RegistrationPipelineAction::Reject,
+            ],
+            RegistrationStage::Refused
+            | RegistrationStage::ValidationFailed
+            | RegistrationStage::Rejected => Vec::new(),
         },
         worker_allows,
         worker_effect,
@@ -128,8 +206,14 @@ pub(crate) fn check_registration_pipeline_refinement() {
         let worker_stage = apply_registration_pipeline_validate(&state);
         assert_eq!(
             worker_stage == RegistrationStage::Validated,
-            worker_validate_succeeds(state),
+            worker_sign_up_approval(state).is_some() && worker_validate_succeeds(state),
             "validate stage for {state:?}"
+        );
+        assert_eq!(
+            worker_stage == RegistrationStage::Refused,
+            state.ip == IpSignUpDecision::Blocked
+                || state.setting.mode() == RegistrationsMode::Closed,
+            "refusal for {state:?}"
         );
 
         let finalize_ok = finalize_registration_validation(
@@ -144,7 +228,9 @@ pub(crate) fn check_registration_pipeline_refinement() {
         );
         assert_eq!(
             registration_pipeline_register_allowed(&state),
-            state.stage == RegistrationStage::Validated && worker_register_succeeds(state),
+            state.stage == RegistrationStage::Validated
+                && worker_sign_up_approval(state).is_some()
+                && worker_register_succeeds(state),
             "register guard for {state:?}"
         );
 
@@ -158,6 +244,21 @@ pub(crate) fn check_registration_pipeline_refinement() {
         }
     }
 
+    for state in worker_states() {
+        assert_eq!(
+            worker_api_access(state),
+            registration_pipeline_api_access(&state),
+            "API access for {state:?}"
+        );
+        for review in [ApprovalReview::Approve, ApprovalReview::Reject] {
+            assert_eq!(
+                worker_review(state, review),
+                registration_pipeline_review(&state, review),
+                "{review:?} for {state:?}"
+            );
+        }
+    }
+
     let invalid = RegistrationPipelineModelState {
         stage: RegistrationStage::Composing,
         username: TextFieldInput::Invalid,
@@ -166,6 +267,10 @@ pub(crate) fn check_registration_pipeline_refinement() {
         agreement: true,
         username_taken: false,
         email_taken: false,
+        setting: RegistrationsModeSetting::Named(RegistrationsMode::Open),
+        ip: IpSignUpDecision::Open,
+        approval: None,
+        reviewed: false,
     };
     assert_eq!(
         apply_registration_pipeline_validate(&invalid),
@@ -180,8 +285,33 @@ pub(crate) fn check_registration_pipeline_refinement() {
         agreement: true,
         username_taken: true,
         email_taken: false,
+        setting: RegistrationsModeSetting::Named(RegistrationsMode::Open),
+        ip: IpSignUpDecision::Open,
+        approval: None,
+        reviewed: false,
     };
     assert!(!registration_pipeline_register_allowed(&taken));
+
+    let held = RegistrationPipelineModelState {
+        stage: RegistrationStage::Provisioned,
+        username: TextFieldInput::Valid,
+        email: TextFieldInput::Valid,
+        password_present: true,
+        agreement: true,
+        username_taken: false,
+        email_taken: false,
+        setting: RegistrationsModeSetting::Named(RegistrationsMode::Open),
+        ip: IpSignUpDecision::RequiresApproval,
+        approval: Some(AccountApproval::Pending),
+        reviewed: false,
+    };
+    assert!(!worker_api_access(held));
+    let approved = worker_effect(held, RegistrationPipelineAction::Approve);
+    assert!(worker_api_access(approved));
+    assert!(!worker_allows(approved, RegistrationPipelineAction::Reject));
+    let rejected = worker_effect(held, RegistrationPipelineAction::Reject);
+    assert_eq!(rejected.stage, RegistrationStage::Rejected);
+    assert!(!worker_api_access(rejected));
 }
 
 #[cfg(test)]

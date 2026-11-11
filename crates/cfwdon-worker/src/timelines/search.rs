@@ -166,35 +166,39 @@ async fn authenticate_search_viewer(
     config: &cfwdon_core::AppConfig,
     plan: &SearchV2ExecutionPlan,
 ) -> std::result::Result<Option<LocalAccount>, Response> {
-    match authenticate_local_api_request(req, db, config)
+    let authentication = authenticate_local_api_request(req, db, config)
         .await
-        .map_err(|error| search_error_response(error.to_string(), 500))?
-    {
+        .map_err(|error| search_error_response(error.to_string(), 500))?;
+    search_viewer(authentication, plan)
+        .map_err(|(message, status)| search_error_response(message, status))
+}
+
+/// Search serves anonymous readers, so a pending account's credential reads
+/// as no credential. A search that needs a signed-in user then answers `401`,
+/// which the router turns into Mastodon's `require_user!` `403` because the
+/// credential lookup recorded the pending refusal.
+fn search_viewer(
+    authentication: LocalApiAuthentication,
+    plan: &SearchV2ExecutionPlan,
+) -> std::result::Result<Option<LocalAccount>, (&'static str, u16)> {
+    match authentication {
         LocalApiAuthentication::Auth0(account) => Ok(Some(account)),
         LocalApiAuthentication::OAuthToken(auth) => {
             if !oauth_access_token_has_any_scope(&auth.token, &["read:search", "read"]) {
-                return Err(search_error_response(
-                    "This action is outside the authorized scopes",
-                    403,
-                ));
+                return Err(("This action is outside the authorized scopes", 403));
             }
             Ok(Some(auth.account))
         }
         LocalApiAuthentication::AppToken | LocalApiAuthentication::InvalidBearer => {
-            Err(search_error_response("The access token is invalid", 401))
+            Err(("The access token is invalid", 401))
         }
-        LocalApiAuthentication::None => unauthenticated_search_viewer(plan),
+        LocalApiAuthentication::PendingApproval(_) | LocalApiAuthentication::None => {
+            match unauthenticated_search_viewer_error_message(plan) {
+                Some(message) => Err((message, 401)),
+                None => Ok(None),
+            }
+        }
     }
-}
-
-fn unauthenticated_search_viewer(
-    plan: &SearchV2ExecutionPlan,
-) -> std::result::Result<Option<LocalAccount>, Response> {
-    if let Some(message) = unauthenticated_search_viewer_error_message(plan) {
-        return Err(search_error_response(message, 401));
-    }
-
-    Ok(None)
 }
 
 fn unauthenticated_search_viewer_error_message(
@@ -353,8 +357,45 @@ async fn resolve_search_url_only_response(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::auth::PendingCredential;
     use crate::response::MastodonSearchResponse;
-    use crate::search::SearchV2ExecutionPlan;
+    use crate::search::{SearchV2ExecutionPlan, SearchV2Query};
+    use cfwdon_domain::LocalAccountRecord;
+
+    #[test]
+    fn a_pending_credential_searches_as_an_anonymous_reader() {
+        let pending = || {
+            LocalApiAuthentication::PendingApproval(PendingCredential {
+                account: LocalAccount::from_record(LocalAccountRecord::test_fixture(
+                    "acct-1", "alice",
+                )),
+                token: None,
+            })
+        };
+        let plan = |query| SearchV2ExecutionPlan::from_query(query);
+        let public = plan(SearchV2Query {
+            q: "rust".to_owned(),
+            ..SearchV2Query::default()
+        });
+        assert!(matches!(search_viewer(pending(), &public), Ok(None)));
+        let resolve = plan(SearchV2Query {
+            q: "alice@remote.example".to_owned(),
+            resolve: Some(true),
+            ..SearchV2Query::default()
+        });
+        let refusal = search_viewer(pending(), &resolve).err();
+        assert_eq!(
+            refusal,
+            Some((
+                "Search queries that resolve remote resources are not supported without authentication",
+                401
+            ))
+        );
+        assert_eq!(
+            search_viewer(LocalApiAuthentication::None, &resolve).err(),
+            refusal
+        );
+    }
 
     #[test]
     fn search_v1_hashtag_name_accepts_string_or_tag_object() {
@@ -413,10 +454,10 @@ mod tests {
             ..SearchV2Query::default()
         });
 
-        match unauthenticated_search_viewer(&plan) {
-            Ok(viewer) => assert!(viewer.is_none()),
-            Err(_) => panic!("plain search should allow anonymous viewers"),
-        }
+        assert!(matches!(
+            search_viewer(LocalApiAuthentication::None, &plan),
+            Ok(None)
+        ));
     }
 
     #[test]

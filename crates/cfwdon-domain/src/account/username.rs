@@ -1,5 +1,3 @@
-use crate::account::email::AccessEmail;
-
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum UsernameError {
     #[error("username can't be blank")]
@@ -26,19 +24,6 @@ impl Username {
         Ok(Self(value))
     }
 
-    pub fn derive_from_email(
-        email: &AccessEmail,
-        base_username_taken: bool,
-    ) -> Result<Self, UsernameError> {
-        let sanitized = sanitize_username_local_part(email.local_part());
-        let candidate = if base_username_taken {
-            format!("{sanitized}_{}", email.short_suffix())
-        } else {
-            sanitized
-        };
-        Self::parse(&candidate)
-    }
-
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -60,26 +45,9 @@ impl std::fmt::Display for Username {
     }
 }
 
-fn sanitize_username_local_part(local_part: &str) -> String {
-    let sanitized: String = local_part
-        .chars()
-        .map(|ch| {
-            let ch = ch.to_ascii_lowercase();
-            if ch == '-' { '_' } else { ch }
-        })
-        .filter(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
-        .collect();
-    if sanitized.is_empty() {
-        "user".to_owned()
-    } else {
-        sanitized
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::account::email::AccessEmail;
 
     #[test]
     fn username_parse_rejects_invalid_characters() {
@@ -87,19 +55,5 @@ mod tests {
             Username::parse("alice-bob").unwrap_err(),
             UsernameError::InvalidCharacters
         );
-    }
-
-    #[test]
-    fn username_derive_from_email_appends_suffix_when_taken() {
-        let email = AccessEmail::parse("alice@example.com").unwrap();
-        let username = Username::derive_from_email(&email, true).unwrap();
-        assert!(username.as_str().starts_with("alice_"));
-    }
-
-    #[test]
-    fn username_derive_from_email_normalizes_hyphenated_local_part() {
-        let email = AccessEmail::parse("alice-bob@example.com").unwrap();
-        let username = Username::derive_from_email(&email, false).unwrap();
-        assert_eq!(username.as_str(), "alice_bob");
     }
 }

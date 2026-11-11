@@ -7,12 +7,12 @@ use super::{
     redirect_response, request_cookie_value, verify_account_password_hash,
 };
 use crate::auth::{
-    extract_authenticated_user, find_account_by_email, find_account_by_username,
-    find_authenticated_local_account,
+    AccountLookup, CredentialRefusal, credential_refusal, extract_authenticated_user,
+    find_account_by_username_with, find_authenticated_local_account,
+    find_credential_account_by_email, pending_approval_response,
 };
 use crate::db_session::bind_request_d1;
 use crate::id_utils::generate_entity_id;
-use crate::identity::instance_base_url;
 use crate::oauth_store::OAuthAppRow;
 use crate::runtime_config::load_config;
 use crate::tracked_d1::D1Database;
@@ -222,7 +222,6 @@ pub(in crate::oauth_apps) fn access_authenticated_without_account_response(
         .unwrap_or_default();
     Ok(Response::from_json(&serde_json::json!({
         "error": "Auth0 authentication succeeded, but no local account is registered for this email.",
-        "registration_url": format!("{}/auth/sign_up", instance_base_url(config)),
         "logout_url": logout_url,
     }))?
     .with_status(403))
@@ -490,10 +489,15 @@ async fn authorize_account_by_password(
         return Ok(None);
     };
 
+    // Mastodon signs a pending account in and issues its tokens; the API
+    // refuses them until an admin approves the account.
     let account = if username_or_email.contains('@') {
-        find_account_by_email(db, &username_or_email).await?
+        find_credential_account_by_email(db, &username_or_email)
+            .await?
+            .map(|credential| credential.account)
     } else {
-        find_account_by_username(db, &username_or_email.to_ascii_lowercase()).await?
+        find_account_by_username_with(db, &username_or_email, AccountLookup::IncludingPending)
+            .await?
     };
     let Some(account) = account else {
         return Ok(None);
@@ -615,6 +619,11 @@ pub(crate) async fn oauth_authorize_response(
         return match action {
             Auth0AuthorizeGetAction::RedirectToLogin => {
                 access_login_redirect_from_authorize_request(&config, &req.url()?, &authorize)
+            }
+            Auth0AuthorizeGetAction::MissingLinkedAccount
+                if credential_refusal() == Some(CredentialRefusal::PendingApproval) =>
+            {
+                pending_approval_response()
             }
             Auth0AuthorizeGetAction::MissingLinkedAccount => {
                 access_authenticated_without_account_response(&config)

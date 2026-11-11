@@ -132,7 +132,7 @@ fn instance_v2_document_uses_conservative_defaults() {
     );
     assert_eq!(
         document.pointer("/registrations/enabled"),
-        Some(&serde_json::json!(instance_open_registrations()))
+        Some(&serde_json::json!(instance_open_registrations(&config)))
     );
     assert_eq!(
         document.pointer("/contact/email"),

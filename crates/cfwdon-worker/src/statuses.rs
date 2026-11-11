@@ -1,6 +1,6 @@
 use crate::auth::{
-    extract_authenticated_user, find_account_by_id, find_authenticated_local_account,
-    resolve_local_account,
+    approved_credential_account, find_account_by_id, find_auth0_credential_account,
+    find_authenticated_local_account,
 };
 use crate::custom_emojis::{config_with_resolved_custom_emojis, sanitize_status_draft};
 use crate::db_session::bind_request_d1;
@@ -211,7 +211,7 @@ async fn resolve_create_status_access(
                     "status token outside authorized scopes".to_owned(),
                 ));
             }
-            let Some(account) = auth.account else {
+            let Some(account) = approved_credential_account(auth.account) else {
                 return Ok(None);
             };
             return Ok(Some(CreateStatusAccess {
@@ -219,11 +219,15 @@ async fn resolve_create_status_access(
                 application_id: Some(auth.token.oauth_app_id),
             }));
         }
+        // An app token posts as the request's Auth0 identity, which must
+        // already name an approved account; it never creates one.
         if let Some(app) = find_oauth_app_by_bearer_token(db, &token).await? {
-            let Some(user) = extract_authenticated_user(req, config).await? else {
+            let credential = find_auth0_credential_account(req, db, config)
+                .await?
+                .map(|(credential, _roles)| credential);
+            let Some(account) = approved_credential_account(credential) else {
                 return Ok(None);
             };
-            let account = resolve_local_account(db, config, &user).await?;
             return Ok(Some(CreateStatusAccess {
                 account,
                 application_id: Some(app.id),

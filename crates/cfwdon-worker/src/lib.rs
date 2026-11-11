@@ -139,7 +139,7 @@ async fn fetch(req: Request, env: Env, ctx: Context) -> Result<Response> {
         return maintenance_response();
     }
     begin_invocation(&env);
-    let response = router::handle_fetch(req, env).await;
+    let response = auth::scope_request_auth_state(router::handle_fetch(req, env)).await;
     // Loops until empty, so work deferred by a deferred task also runs.
     ctx.wait_until(async {
         deferred::run_deferred_tasks_inline().await;

@@ -1,82 +1,10 @@
 use crate::crypto_keys::generate_account_key_material;
 use crate::secret_storage::{decrypt_secret, encrypt_secret, is_encrypted_secret};
 use crate::tracked_d1::D1Database;
-use cfwdon_core::{AppConfig, AuthenticatedUser};
-use cfwdon_domain::{ComposingAccessProvision, LocalAccount, LocalAccountRecord};
+use cfwdon_core::AppConfig;
+use cfwdon_domain::{LocalAccount, LocalAccountRecord};
 use worker::d1::D1Type;
 use worker::{Error, Result};
-pub(crate) async fn resolve_local_account(
-    db: &D1Database,
-    config: &AppConfig,
-    user: &AuthenticatedUser,
-) -> Result<LocalAccount> {
-    if let Some(account) = find_account_by_email(db, &user.email).await? {
-        return ensure_account_keys(db, config, account).await;
-    }
-
-    let base_username_taken = {
-        let email = cfwdon_domain::AccessEmail::parse(&user.email).map_err(|error| {
-            Error::RustError(format!("authenticated user email is invalid: {error}"))
-        })?;
-        let base = cfwdon_domain::Username::derive_from_email(&email, false).map_err(|error| {
-            Error::RustError(format!("authenticated user email is invalid: {error}"))
-        })?;
-        find_account_by_username(db, base.as_str()).await?.is_some()
-    };
-    let provision = ComposingAccessProvision {
-        email: user.email.clone(),
-    }
-    .resolve(base_username_taken)
-    .map_err(|error| Error::RustError(format!("authenticated user email is invalid: {error}")))?;
-    let candidate = provision.username.as_str();
-    let display_name = candidate.to_owned();
-    let key_material = generate_account_key_material().await?;
-    let bindings = [
-        D1Type::Text(candidate),
-        D1Type::Text(provision.email.as_str()),
-        D1Type::Text(display_name.as_str()),
-        D1Type::Text(""),
-        D1Type::Text(key_material.public_key_pem.as_str()),
-    ];
-
-    db.prepare(
-        "INSERT INTO accounts (
-            id,
-            username,
-            access_email,
-            display_name,
-            fields_json,
-            discoverable,
-            default_quote_policy,
-            private_key_jwk,
-            public_key_pem,
-            created_at,
-            updated_at
-        ) VALUES (
-            lower(hex(randomblob(16))),
-            ?1,
-            ?2,
-            ?3,
-            '[]',
-            0,
-            'public',
-            ?4,
-            ?5,
-            CURRENT_TIMESTAMP,
-            CURRENT_TIMESTAMP
-        )",
-    )
-    .bind_refs(bindings.iter())?
-    .run()
-    .await?;
-
-    let account = find_account_by_email(db, &user.email)
-        .await?
-        .ok_or_else(|| Error::RustError("failed to load provisioned account".to_owned()))?;
-    store_account_private_key(db, config, account.id(), &key_material.private_key_jwk).await?;
-    Ok(account)
-}
-
 pub(crate) async fn ensure_account_keys(
     db: &D1Database,
     config: &AppConfig,
@@ -109,7 +37,7 @@ pub(crate) async fn ensure_account_keys(
     .await?;
     store_account_private_key(db, config, account.id(), &key_material.private_key_jwk).await?;
 
-    find_account_by_id(db, account.id())
+    find_account_by_id_with(db, account.id(), AccountLookup::IncludingPending)
         .await?
         .ok_or_else(|| Error::RustError("failed to reload account key material".to_owned()))
 }
@@ -234,60 +162,114 @@ pub(crate) async fn load_account_private_key_jwk(
     Ok(None)
 }
 
-pub(crate) async fn find_account_by_email(
+/// The account holding `email`, pending or not: registration and e-mail
+/// changes keep an address unique across every account, and an Auth0 sign-in
+/// needs some account to sign in to. Only the id comes
+/// back, so a caller cannot act as the account; acting on an e-mail's account
+/// goes through `find_credential_account_by_email`.
+pub(crate) async fn find_account_id_holding_email(
     db: &D1Database,
     email: &str,
+) -> Result<Option<String>> {
+    #[derive(serde::Deserialize)]
+    struct Row {
+        id: String,
+    }
+    Ok(db
+        .prepare("SELECT id FROM accounts WHERE access_email = ?1 LIMIT 1")
+        .bind_refs(&D1Type::Text(email))?
+        .first::<Row>(None)
+        .await?
+        .map(|row| row.id))
+}
+
+const ACCOUNT_SELECT: &str = "SELECT id, username, access_email, display_name, bio_html, bio_text, fields_json, locked, bot, discoverable, default_post_visibility, default_quote_policy, default_sensitive, default_language, avatar_object_key, avatar_content_type, header_object_key, header_content_type, '' AS private_key_jwk, public_key_pem, created_at
+     FROM accounts";
+
+/// Mastodon's `check_account_approval`: an account waiting for approval does
+/// not exist for anyone but its own credentials, the admin review, and
+/// uniqueness checks.
+pub(crate) const APPROVED_ONLY: &str = "NOT EXISTS (
+         SELECT 1 FROM pending_account_approvals p WHERE p.account_id = accounts.id
+     )";
+
+/// Which accounts a lookup by id or username may return.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AccountLookup {
+    /// Accounts their owners may use; what every public surface shows.
+    Approved,
+    /// Pending accounts too, for the admin review, sign-up uniqueness, and
+    /// handing a pending account its token (Mastodon issues those).
+    IncludingPending,
+}
+
+/// The columns an account lookup may key on. `access_email` is not one: an
+/// e-mail resolves to an account only through
+/// `find_credential_account_by_email`, which returns the approval with it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AccountKey {
+    Id,
+    Username,
+}
+
+impl AccountKey {
+    fn column(self) -> &'static str {
+        match self {
+            Self::Id => "id",
+            Self::Username => "username",
+        }
+    }
+}
+
+async fn find_account_where(
+    db: &D1Database,
+    key: AccountKey,
+    value: &str,
+    lookup: AccountLookup,
 ) -> Result<Option<LocalAccount>> {
-    let email = D1Type::Text(email);
-
+    let column = key.column();
+    let approval_filter = match lookup {
+        AccountLookup::Approved => format!(" AND {APPROVED_ONLY}"),
+        AccountLookup::IncludingPending => String::new(),
+    };
     let row = db
-        .prepare(
-            "SELECT id, username, access_email, display_name, bio_html, bio_text, fields_json, locked, bot, discoverable, default_post_visibility, default_quote_policy, default_sensitive, default_language, avatar_object_key, avatar_content_type, header_object_key, header_content_type, '' AS private_key_jwk, public_key_pem, created_at
-             FROM accounts
-             WHERE access_email = ?1
-             LIMIT 1",
-        )
-        .bind_refs(&email)?
+        .prepare(format!(
+            "{ACCOUNT_SELECT}
+             WHERE {column} = ?1{approval_filter}
+             LIMIT 1"
+        ))
+        .bind_refs(&D1Type::Text(value))?
         .first::<LocalAccountRecord>(None)
         .await?;
-
     Ok(row.map(LocalAccount::from_record))
 }
 
+/// An approved account by id; a pending one is not found.
 pub(crate) async fn find_account_by_id(db: &D1Database, id: &str) -> Result<Option<LocalAccount>> {
-    let id = D1Type::Text(id);
-
-    let row = db
-        .prepare(
-            "SELECT id, username, access_email, display_name, bio_html, bio_text, fields_json, locked, bot, discoverable, default_post_visibility, default_quote_policy, default_sensitive, default_language, avatar_object_key, avatar_content_type, header_object_key, header_content_type, '' AS private_key_jwk, public_key_pem, created_at
-             FROM accounts
-             WHERE id = ?1
-             LIMIT 1",
-        )
-        .bind_refs(&id)?
-        .first::<LocalAccountRecord>(None)
-        .await?;
-
-    Ok(row.map(LocalAccount::from_record))
+    find_account_where(db, AccountKey::Id, id, AccountLookup::Approved).await
 }
 
+/// An approved account by username; a pending one is not found.
 pub(crate) async fn find_account_by_username(
     db: &D1Database,
     username: &str,
 ) -> Result<Option<LocalAccount>> {
+    find_account_by_username_with(db, username, AccountLookup::Approved).await
+}
+
+pub(crate) async fn find_account_by_id_with(
+    db: &D1Database,
+    id: &str,
+    lookup: AccountLookup,
+) -> Result<Option<LocalAccount>> {
+    find_account_where(db, AccountKey::Id, id, lookup).await
+}
+
+pub(crate) async fn find_account_by_username_with(
+    db: &D1Database,
+    username: &str,
+    lookup: AccountLookup,
+) -> Result<Option<LocalAccount>> {
     let username = username.trim().to_ascii_lowercase();
-    let username = D1Type::Text(username.as_str());
-
-    let row = db
-        .prepare(
-            "SELECT id, username, access_email, display_name, bio_html, bio_text, fields_json, locked, bot, discoverable, default_post_visibility, default_quote_policy, default_sensitive, default_language, avatar_object_key, avatar_content_type, header_object_key, header_content_type, '' AS private_key_jwk, public_key_pem, created_at
-             FROM accounts
-             WHERE username = ?1
-             LIMIT 1",
-        )
-        .bind_refs(&username)?
-        .first::<LocalAccountRecord>(None)
-        .await?;
-
-    Ok(row.map(LocalAccount::from_record))
+    find_account_where(db, AccountKey::Username, &username, lookup).await
 }

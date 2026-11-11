@@ -74,7 +74,7 @@ GitHub Actions runs `web-ui` and `server` on separate runners in parallel. The a
 
 In GitHub Actions the `server` job installs Nix (`nixbuild/nix-quick-install-action`), restores the Nix store from the Actions cache (`nix-community/cache-nix-action`, keyed on `flake.nix`, `flake.lock`, and `rust-toolchain.toml`; only non-PR runs save or purge it), configures [nixbuild.net](../operations/nixbuild-net.md) when the `NIXBUILD_TOKEN` secret is set, loads the flake dev shell into later steps (`nicknovitski/nix-develop`), and then runs `just ci-server` and, outside pull requests, `just ci-wrangler-dry-run`.
 
-`ci-server` (PRs and `main`) is `cargo fmt --check`, native clippy `--all-targets`, wasm clippy, `cargo test --workspace`, and the Python `scripts/check_migrations.py`, `scripts/check_query_plans.py`, and `scripts/check_module_layers.py` checks. The GitHub `web-ui` job is `pnpm run check`, `pnpm test`, `pnpm run build`, plus `node --test scripts/lib/*.test.mjs`; the `just ci-web-ui` recipe omits that last step, so run it yourself after changing `scripts/lib/`. `wrangler deploy --dry-run` stays off pull requests.
+`ci-server` (PRs and `main`) is `cargo fmt --check`, native clippy `--all-targets`, wasm clippy, `cargo test --workspace`, and the Python `scripts/check_migrations.py`, `scripts/check_query_plans.py`, `scripts/check_module_layers.py`, and `scripts/check_pending_account_guard.py` checks. The GitHub `web-ui` job is `pnpm run check`, `pnpm test`, `pnpm run build`, plus `node --test scripts/lib/*.test.mjs`; the `just ci-web-ui` recipe omits that last step, so run it yourself after changing `scripts/lib/`. `wrangler deploy --dry-run` stays off pull requests.
 
 Jobs do not use path filters: a skipped `web-ui` or `server` is not `success`, so the aggregator would fail. Concurrent runs cancel in-progress work for the same pull request only; `main` is not cancelled.
 
@@ -83,7 +83,7 @@ Jobs do not use path filters: a skipped `web-ui` or `server` is not `success`, s
 `just ci` currently runs:
 
 - `ci-web-ui`: `pnpm install --frozen-lockfile`, `pnpm run check`, `pnpm test`, and `pnpm run build` in `web-ui`
-- `ci-server`: `cargo fmt --all --check`, `cargo clippy` native `--all-targets` and wasm32, `cargo test --workspace`, then `scripts/check_migrations.py`, `scripts/check_query_plans.py`, and `scripts/check_module_layers.py`
+- `ci-server`: `cargo fmt --all --check`, `cargo clippy` native `--all-targets` and wasm32, `cargo test --workspace`, then `scripts/check_migrations.py`, `scripts/check_query_plans.py`, `scripts/check_module_layers.py`, and `scripts/check_pending_account_guard.py` (plus its `--self-test`)
 - `ci-wrangler-dry-run`: `WRANGLER_LOG=error wrangler deploy --dry-run`
 
 `admin-ui` has no CI job or tests; `npm run check` there runs `svelte-check` if you change it.
@@ -150,15 +150,13 @@ A seventh model covers ActivityPub audience to visibility mapping in [`crates/cf
 
 An eighth model covers local status composition in [`crates/cfwdon-domain/src/status/draft.rs`](../../crates/cfwdon-domain/src/status/draft.rs): `ComposingStatus` validation, quote/media/poll constraints, and `PublishIntent` quote-policy and quote-state resolution.
 
-A ninth model covers account registration in [`crates/cfwdon-domain/src/account/registration.rs`](../../crates/cfwdon-domain/src/account/registration.rs): field validation, `RegistrationIntent` assignment, and `LocalAccount` provisioning defaults.
+A ninth model covers account registration in [`crates/cfwdon-domain/src/account/registration.rs`](../../crates/cfwdon-domain/src/account/registration.rs) and [`approval.rs`](../../crates/cfwdon-domain/src/account/approval.rs): field validation, `RegistrationIntent` assignment, `LocalAccount` provisioning defaults, the `REGISTRATIONS_MODE` setting, and admin approval. It checks that only an explicit `open` setting or an admin's approval gives an account API access.
 
-A tenth model covers OAuth-style access provisioning in the same module: email resolution, username derivation with collision suffixing, and provisioning defaults for first-time authenticated users.
+A tenth model covers inbox replay dedupe in [`crates/cfwdon-domain/src/federation/inbox.rs`](../../crates/cfwdon-domain/src/federation/inbox.rs): one activity id, a remote that retries until it gets a `2xx`, a Worker that can be cut off before or after the effect lands, and the 15-minute stale-claim reclaim. It checks that a `2xx` is only answered once the effect is applied, that an in-flight duplicate is never accepted, and that from every reachable state the activity can still be applied. A test runs the pre-fix answer (`202` for an in-flight duplicate) and expects all three checks to fail.
 
-An eleventh model covers inbox replay dedupe in [`crates/cfwdon-domain/src/federation/inbox.rs`](../../crates/cfwdon-domain/src/federation/inbox.rs): one activity id, a remote that retries until it gets a `2xx`, a Worker that can be cut off before or after the effect lands, and the 15-minute stale-claim reclaim. It checks that a `2xx` is only answered once the effect is applied, that an in-flight duplicate is never accepted, and that from every reachable state the activity can still be applied. A test runs the pre-fix answer (`202` for an in-flight duplicate) and expects all three checks to fail.
+An eleventh model covers federation request policy in [`crates/cfwdon-domain/src/federation/`](../../crates/cfwdon-domain/src/federation/): ActivityPub signed-header requirements, actor keyId matching, static remote URL host policy, and request date skew bounds.
 
-A twelfth model covers federation request policy in [`crates/cfwdon-domain/src/federation/`](../../crates/cfwdon-domain/src/federation/): ActivityPub signed-header requirements, actor keyId matching, static remote URL host policy, and request date skew bounds.
-
-A sixteenth model covers DNS rebinding SSRF defense in [`crates/cfwdon-domain/src/federation/dns.rs`](../../crates/cfwdon-domain/src/federation/dns.rs): hostname resolution must return only public A/AAAA addresses after static host policy passes, matching the async DNS guard in the worker.
+A twelfth model covers DNS rebinding SSRF defense in [`crates/cfwdon-domain/src/federation/dns.rs`](../../crates/cfwdon-domain/src/federation/dns.rs): hostname resolution must return only public A/AAAA addresses after static host policy passes, matching the async DNS guard in the worker.
 
 A thirteenth model covers eight-slot outbox delivery pools in [`crates/cfwdon-domain/src/delivery.rs`](../../crates/cfwdon-domain/src/delivery.rs), matching production `buffer_unordered(8)` concurrency while checking that each slot still follows the same retry rules independently. The pool starts at the fifth-to-last attempt so the checker stays small; the refinement check covers the earlier, identical retry steps.
 
@@ -168,7 +166,7 @@ Registration transitions now emit typed [`RegistrationEvent`](../../crates/cfwdo
 
 Status draft transitions now emit typed [`StatusDraftEvent`](../../crates/cfwdon-domain/src/status/draft.rs) values on validate and publish-intent resolution, and a fifteenth model checks those events are surfaced consistently.
 
-A seventeenth model covers secure mode (`AUTHORIZED_FETCH`) in [`crates/cfwdon-domain/src/federation/authorized_fetch.rs`](../../crates/cfwdon-domain/src/federation/authorized_fetch.rs). It checks that an unsigned or unverified GET never receives a non-public resource in secure mode, that an unsigned actor GET still gets the key, that a signer the owner blocks never sees the owner's posts, and that no secure-mode answer is shared-cacheable.
+A sixteenth model covers secure mode (`AUTHORIZED_FETCH`) in [`crates/cfwdon-domain/src/federation/authorized_fetch.rs`](../../crates/cfwdon-domain/src/federation/authorized_fetch.rs). It checks that an unsigned or unverified GET never receives a non-public resource in secure mode, that an unsigned actor GET still gets the key, that a signer the owner blocks never sees the owner's posts, and that no secure-mode answer is shared-cacheable.
 
 Refinement mappings in [`docs/reference/model-refinement.md`](../reference/model-refinement.md) link each model to domain symbols and worker call sites. Executable refinement checks cover quote policy/state resolution, status draft publish, registration, federation, delivery, follow, and ActivityPub visibility inside `verify_models()`.
 

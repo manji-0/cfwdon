@@ -3,8 +3,8 @@ use super::{
     invalid_access_token_response, outside_authorized_scopes_response, validation_failed_response,
 };
 use crate::auth::{
-    LocalApiAuthentication, authenticate_local_api_request, find_account_by_email,
-    find_authenticated_local_account,
+    LocalApiAuthentication, PendingCredential, authenticate_local_api_request,
+    find_account_id_holding_email,
 };
 use crate::db_session::bind_request_d1;
 use crate::id_utils::generate_entity_id;
@@ -295,6 +295,34 @@ fn email_confirmation_html_response(title: &str, message: &str, status: u16) -> 
     Ok(response)
 }
 
+/// The account an e-mail confirmation request acts for, and its token's app.
+/// Mastodon's `Api::V1::Emails::ConfirmationsController` skips
+/// `require_user!`, so an account waiting for approval may confirm its
+/// address; every other endpoint refuses it.
+async fn email_confirmation_credential(
+    req: &Request,
+    db: &D1Database,
+    config: &cfwdon_core::AppConfig,
+    scopes: &[&str],
+) -> Result<std::result::Result<(cfwdon_domain::LocalAccount, Option<i64>), Response>> {
+    let (account, token) = match authenticate_local_api_request(req, db, config).await? {
+        LocalApiAuthentication::OAuthToken(auth) => (auth.account, Some(auth.token)),
+        LocalApiAuthentication::Auth0(account) => (account, None),
+        LocalApiAuthentication::PendingApproval(PendingCredential { account, token }) => {
+            (account, token)
+        }
+        LocalApiAuthentication::AppToken
+        | LocalApiAuthentication::InvalidBearer
+        | LocalApiAuthentication::None => return Ok(Err(invalid_access_token_response()?)),
+    };
+    if let Some(token) = &token
+        && !oauth_access_token_has_any_scope(token, scopes)
+    {
+        return Ok(Err(outside_authorized_scopes_response()?));
+    }
+    Ok(Ok((account, token.map(|token| token.oauth_app_id))))
+}
+
 pub(crate) async fn create_email_confirmation_response(
     mut req: Request,
     ctx: RouteContext<()>,
@@ -302,19 +330,11 @@ pub(crate) async fn create_email_confirmation_response(
     let config = load_config(&ctx);
     let db = bind_request_d1(&ctx, &config)?;
     let (account, request_oauth_app_id) =
-        match authenticate_local_api_request(&req, &db, &config).await? {
-            LocalApiAuthentication::OAuthToken(auth) => {
-                if !oauth_access_token_has_any_scope(&auth.token, &["write:accounts", "write"]) {
-                    return outside_authorized_scopes_response();
-                }
-                (auth.account, Some(auth.token.oauth_app_id))
-            }
-            LocalApiAuthentication::Auth0(account) => (account, None),
-            LocalApiAuthentication::AppToken
-            | LocalApiAuthentication::InvalidBearer
-            | LocalApiAuthentication::None => {
-                return invalid_access_token_response();
-            }
+        match email_confirmation_credential(&req, &db, &config, &["write:accounts", "write"])
+            .await?
+        {
+            Ok(credential) => credential,
+            Err(response) => return Ok(response),
         };
     let Some(pending) = find_pending_email_confirmation(&db, account.id()).await? else {
         return email_confirmation_unavailable_response();
@@ -328,8 +348,8 @@ pub(crate) async fn create_email_confirmation_response(
     };
     let confirmation_token = generate_entity_id(32)?;
     let pending_email = request.email.as_deref().unwrap_or(&pending.pending_email);
-    if let Some(existing) = find_account_by_email(&db, pending_email).await?
-        && existing.id() != account.id()
+    if let Some(holder) = find_account_id_holding_email(&db, pending_email).await?
+        && holder != account.id()
     {
         let mut details = BTreeMap::new();
         details.insert("email", vec!["has already been taken".to_owned()]);
@@ -375,8 +395,8 @@ pub(crate) async fn email_confirmation_page_response(
             404,
         );
     };
-    if let Some(existing) = find_account_by_email(&db, &pending.pending_email).await?
-        && existing.id() != pending.account_id
+    if let Some(holder) = find_account_id_holding_email(&db, &pending.pending_email).await?
+        && holder != pending.account_id
     {
         return email_confirmation_html_response(
             "Email is already taken",
@@ -398,8 +418,16 @@ pub(crate) async fn check_email_confirmation_response(
 ) -> Result<Response> {
     let config = load_config(&ctx);
     let db = bind_request_d1(&ctx, &config)?;
-    let Some(account) = find_authenticated_local_account(&req, &db, &config).await? else {
-        return invalid_access_token_response();
+    let (account, _) = match email_confirmation_credential(
+        &req,
+        &db,
+        &config,
+        &["read:accounts", "read"],
+    )
+    .await?
+    {
+        Ok(credential) => credential,
+        Err(response) => return Ok(response),
     };
     let confirmed = find_pending_email_confirmation(&db, account.id())
         .await?

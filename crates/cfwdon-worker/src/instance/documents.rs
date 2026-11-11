@@ -26,8 +26,10 @@ const POLL_MAX_CHARACTERS_PER_OPTION: u64 = 50;
 const POLL_MIN_EXPIRATION: u64 = 300;
 const POLL_MAX_EXPIRATION: u64 = 2_629_746;
 
-pub(crate) fn instance_open_registrations() -> bool {
-    false
+/// Mastodon's `registrations_enabled?`: `POST /api/v1/accounts` takes
+/// sign-ups unless `REGISTRATIONS_MODE` is `none`.
+pub(crate) fn instance_open_registrations(config: &AppConfig) -> bool {
+    config.registrations_mode.registrations_enabled()
 }
 
 fn streaming_api_url(config: &AppConfig) -> String {
@@ -181,12 +183,16 @@ fn instance_v2_configuration(config: &AppConfig) -> serde_json::Value {
     })
 }
 
-fn instance_v2_registrations_document() -> serde_json::Value {
+fn instance_v2_registrations_document(config: &AppConfig) -> serde_json::Value {
     serde_json::json!({
-        "enabled": instance_open_registrations(),
-        "approval_required": false,
+        "enabled": instance_open_registrations(config),
+        "approval_required": config.registrations_mode.approval_required(),
         "reason_required": false,
-        "message": "Registration is handled by Auth0.",
+        "message": if instance_open_registrations(config) {
+            serde_json::Value::Null
+        } else {
+            serde_json::json!("Registrations are closed.")
+        },
         "min_age": serde_json::Value::Null,
         "url": serde_json::Value::Null,
     })
@@ -224,8 +230,8 @@ pub(crate) fn build_instance_v1_document(
         },
         "thumbnail": instance_thumbnail_url(config),
         "languages": configured_instance_languages(config),
-        "registrations": instance_open_registrations(),
-        "approval_required": false,
+        "registrations": instance_open_registrations(config),
+        "approval_required": config.registrations_mode.approval_required(),
         "invites_enabled": false,
         "configuration": {
             "accounts": instance_accounts_configuration(false),
@@ -273,7 +279,7 @@ pub(crate) fn build_instance_v2_document(
     );
     response.insert(
         "registrations".to_owned(),
-        instance_v2_registrations_document(),
+        instance_v2_registrations_document(config),
     );
     response.insert(
         "api_versions".to_owned(),
@@ -337,10 +343,9 @@ pub(crate) fn build_default_extended_description_document(description: &str) -> 
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        build_instance_v1_document, build_instance_v2_document, instance_open_registrations,
-    };
+    use super::{build_instance_v1_document, build_instance_v2_document};
     use cfwdon_core::AppConfig;
+    use cfwdon_domain::RegistrationsMode;
     use cfwdon_domain::{InstanceCapabilities, InstanceSummary, SoftwareInfo};
 
     fn sample_summary() -> InstanceSummary {
@@ -361,18 +366,39 @@ mod tests {
     }
 
     #[test]
-    fn instance_documents_registrations_match_open_registrations_helper() {
+    fn instance_documents_require_approval_by_default() {
         let config = AppConfig::new("https://social.example", "cfwdon", "test instance");
         let v1 = build_instance_v1_document(&sample_summary(), &config, 1, 1, 1, 1);
         let v2 = build_instance_v2_document(&sample_summary(), &config, 1);
-        assert_eq!(
-            v1["registrations"],
-            serde_json::json!(instance_open_registrations())
-        );
-        assert_eq!(
-            v2["registrations"]["enabled"],
-            serde_json::json!(instance_open_registrations())
-        );
-        assert!(!instance_open_registrations());
+        assert_eq!(v1["registrations"], true);
+        assert_eq!(v1["approval_required"], true);
+        assert_eq!(v2["registrations"]["enabled"], true);
+        assert_eq!(v2["registrations"]["approval_required"], true);
+    }
+
+    #[test]
+    fn instance_documents_report_the_registrations_mode() {
+        let mut config = AppConfig::new("https://social.example", "cfwdon", "test instance");
+        for (mode, enabled, approval_required) in [
+            (RegistrationsMode::Open, true, false),
+            (RegistrationsMode::Approved, true, true),
+            (RegistrationsMode::Closed, false, false),
+        ] {
+            config.registrations_mode = mode;
+            let v1 = build_instance_v1_document(&sample_summary(), &config, 1, 1, 1, 1);
+            let v2 = build_instance_v2_document(&sample_summary(), &config, 1);
+            assert_eq!(v1["registrations"], enabled, "{mode:?}");
+            assert_eq!(v1["approval_required"], approval_required, "{mode:?}");
+            assert_eq!(v2["registrations"]["enabled"], enabled, "{mode:?}");
+            assert_eq!(
+                v2["registrations"]["approval_required"], approval_required,
+                "{mode:?}"
+            );
+            assert_eq!(
+                v2["registrations"]["message"].is_null(),
+                enabled,
+                "{mode:?}"
+            );
+        }
     }
 }

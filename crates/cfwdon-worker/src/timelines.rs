@@ -1,3 +1,4 @@
+use crate::federation::instance_domain_blocks;
 use crate::oauth_store::{app_bearer_token_from_request, find_oauth_app_by_bearer_token};
 use crate::store::media::MediaAttachmentRow;
 use crate::store::remote::RemoteActorRow;
@@ -770,7 +771,15 @@ pub(crate) async fn trending_status_documents(
         });
     }
 
+    // Mastodon's `Trends::Statuses` never ranks a silenced account's post.
+    let domain_blocks = instance_domain_blocks().await?;
     for (status, actor) in remote_statuses {
+        if domain_blocks
+            .restrictions_for_actor(&actor.domain, &actor.actor_uri)
+            .silenced
+        {
+            continue;
+        }
         candidates.push(PublicTimelineCandidateEntry {
             timestamp: status.published_at.clone(),
             id: status.id.clone(),

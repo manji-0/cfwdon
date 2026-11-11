@@ -1,6 +1,6 @@
 use crate::oauth_store::{
-    AUTH0_REFRESH_COOKIE, AUTH0_SESSION_COOKIE, OAuthAccessTokenRow, access_token_cookie_max_age,
-    app_bearer_token_from_request, exchange_auth0_refresh_token,
+    AUTH0_REFRESH_COOKIE, AUTH0_SESSION_COOKIE, CredentialAccount, OAuthAccessTokenRow,
+    access_token_cookie_max_age, app_bearer_token_from_request, exchange_auth0_refresh_token,
     find_legacy_oauth_access_token_with_account_by_plaintext,
     find_oauth_access_token_with_account_by_bearer_token,
     find_oauth_access_token_with_account_by_token_hash, find_oauth_app_by_bearer_token,
@@ -11,35 +11,25 @@ use crate::observability::log_federation_event;
 use crate::tracked_d1::D1Database;
 
 mod account_store;
+mod approvals;
 mod jwt;
+mod request_state;
 mod scopes;
 pub(crate) use account_store::*;
+pub(crate) use approvals::*;
 pub(crate) use jwt::*;
+pub(crate) use request_state::{
+    CredentialRefusal, credential_refusal, record_credential_refusal, scope_request_auth_state,
+};
+use request_state::{
+    RefreshedAuth0Session, record_refreshed_auth0_session, refreshed_auth0_session,
+};
 use scopes::required_oauth_scopes;
 
-pub(crate) use self::account_store::find_account_by_email;
 pub(crate) use self::jwt::{auth0_roles_from_claims, verify_auth0_jwt};
 use cfwdon_core::{AppConfig, AuthenticatedUser};
-use cfwdon_domain::LocalAccount;
-use std::cell::{Cell, RefCell};
+use cfwdon_domain::{AccountApproval, LocalAccount};
 use worker::{Error, Request, Response, Result};
-
-pub(crate) use self::account_store::{
-    ensure_account_keys, find_account_by_id, find_account_by_username, resolve_local_account,
-};
-
-#[derive(Clone, Debug)]
-struct PendingAuth0WebSession {
-    user: AuthenticatedUser,
-    access_token: String,
-    refresh_token: Option<String>,
-    access_max_age: i64,
-}
-
-thread_local! {
-    static AUTH0_WEB_SESSION: RefCell<Option<PendingAuth0WebSession>> = const { RefCell::new(None) };
-    static OAUTH_SCOPE_DENIED: Cell<bool> = const { Cell::new(false) };
-}
 
 #[derive(Clone, Debug)]
 pub(crate) struct OAuthAuthenticatedLocalAccount {
@@ -51,16 +41,51 @@ pub(crate) struct OAuthAuthenticatedLocalAccount {
 pub(crate) enum LocalApiAuthentication {
     Auth0(LocalAccount),
     OAuthToken(OAuthAuthenticatedLocalAccount),
+    /// A valid credential whose account waits for approval. Mastodon's
+    /// `require_user!` refuses it with `403`; only the endpoints that skip it
+    /// (e-mail confirmation) act on it. Resolving it records
+    /// [`CredentialRefusal::PendingApproval`], so a handler's `401` becomes
+    /// that `403`.
+    PendingApproval(PendingCredential),
     AppToken,
     InvalidBearer,
     None,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct PendingCredential {
+    pub(crate) account: LocalAccount,
+    /// The OAuth token presented; `None` for an Auth0 identity.
+    pub(crate) token: Option<OAuthAccessTokenRow>,
+}
+
+pub(crate) fn pending_approval_response() -> Result<Response> {
+    Ok(Response::from_json(&serde_json::json!({
+        "error": "Your login is currently pending approval",
+    }))?
+    .with_status(403))
+}
+
+/// The account a credential names when its owner may use it. A pending one
+/// yields `None` and records why, so the router answers Mastodon's `403`.
+pub(crate) fn approved_credential_account(
+    credential: Option<CredentialAccount>,
+) -> Option<LocalAccount> {
+    let credential = credential?;
+    match credential.approval {
+        AccountApproval::Approved => Some(credential.account),
+        AccountApproval::Pending => {
+            record_credential_refusal(CredentialRefusal::PendingApproval);
+            None
+        }
+    }
 }
 
 pub(crate) async fn extract_authenticated_user(
     req: &Request,
     config: &AppConfig,
 ) -> Result<Option<AuthenticatedUser>> {
-    if let Some(session) = AUTH0_WEB_SESSION.with(|slot| slot.borrow().clone()) {
+    if let Some(session) = refreshed_auth0_session() {
         return Ok(Some(session.user));
     }
 
@@ -165,27 +190,13 @@ async fn refresh_auth0_cookie_session(
         .refresh_token
         .filter(|value| !value.is_empty())
         .or(Some(refresh_token));
-    AUTH0_WEB_SESSION.with(|slot| {
-        *slot.borrow_mut() = Some(PendingAuth0WebSession {
-            user: user.clone(),
-            access_token: token.access_token,
-            refresh_token: next_refresh,
-            access_max_age: access_token_cookie_max_age(token.expires_in),
-        });
+    record_refreshed_auth0_session(RefreshedAuth0Session {
+        user: user.clone(),
+        access_token: token.access_token,
+        refresh_token: next_refresh,
+        access_max_age: access_token_cookie_max_age(token.expires_in),
     });
     Ok(Some(user))
-}
-
-pub(crate) fn reset_auth0_web_session_state() {
-    AUTH0_WEB_SESSION.with(|slot| slot.borrow_mut().take());
-    OAUTH_SCOPE_DENIED.with(|flag| flag.set(false));
-}
-
-/// True when this request presented a valid OAuth token whose scopes did not
-/// cover the endpoint. Handlers only see "unauthenticated" and answer 401; the
-/// router rewrites that to Mastodon's 403 scope error.
-pub(crate) fn oauth_scope_denied() -> bool {
-    OAUTH_SCOPE_DENIED.with(Cell::get)
 }
 
 pub(crate) fn oauth_scope_denied_response() -> Result<Response> {
@@ -196,7 +207,7 @@ pub(crate) fn oauth_scope_denied_response() -> Result<Response> {
 }
 
 pub(crate) fn apply_auth0_web_session_cookies(response: &mut Response) -> Result<()> {
-    let Some(session) = AUTH0_WEB_SESSION.with(|slot| slot.borrow().clone()) else {
+    let Some(session) = refreshed_auth0_session() else {
         return Ok(());
     };
     set_auth0_session_cookies(
@@ -257,28 +268,55 @@ pub(crate) async fn find_authenticated_local_account_with_roles(
     if let Some(token) = app_bearer_token_from_request(req)?
         && let Some(auth) = find_oauth_access_token_with_account_by_bearer_token(db, &token).await?
     {
-        if oauth_access_token_allows_request(req, &auth.token) {
-            return Ok(auth.account.map(|account| (account, Vec::new())));
+        if !oauth_access_token_allows_request(req, &auth.token) {
+            record_credential_refusal(CredentialRefusal::ScopeDenied);
+            return Ok(None);
         }
-        OAUTH_SCOPE_DENIED.with(|flag| flag.set(true));
-        return Ok(None);
+        return Ok(approved_credential_account(auth.account).map(|account| (account, Vec::new())));
     }
 
-    find_auth0_local_account_with_roles(req, db, config).await
+    let Some((credential, roles)) = find_auth0_credential_account(req, db, config).await? else {
+        return Ok(None);
+    };
+    Ok(approved_credential_account(Some(credential)).map(|account| (account, roles)))
 }
 
-async fn find_auth0_local_account_with_roles(
+/// The account the request's Auth0 identity signs in as, by its e-mail, with
+/// the identity's roles. An identity never creates an account: sign-ups go
+/// through `POST /api/v1/accounts`, which applies `REGISTRATIONS_MODE`.
+pub(crate) async fn find_auth0_credential_account(
     req: &Request,
     db: &D1Database,
     config: &AppConfig,
-) -> Result<Option<(LocalAccount, Vec<String>)>> {
+) -> Result<Option<(CredentialAccount, Vec<String>)>> {
     let Some(user) = extract_authenticated_user(req, config).await? else {
         return Ok(None);
     };
-    let Some(account) = find_account_by_email(db, &user.email).await? else {
-        return Ok(None);
-    };
-    Ok(Some((account, user.roles)))
+    Ok(find_credential_account_by_email(db, &user.email)
+        .await?
+        .map(|credential| (credential, user.roles)))
+}
+
+fn api_authentication_from_credential(
+    credential: CredentialAccount,
+    token: Option<OAuthAccessTokenRow>,
+) -> LocalApiAuthentication {
+    match (credential.approval, token) {
+        (AccountApproval::Approved, Some(token)) => {
+            LocalApiAuthentication::OAuthToken(OAuthAuthenticatedLocalAccount {
+                account: credential.account,
+                token,
+            })
+        }
+        (AccountApproval::Approved, None) => LocalApiAuthentication::Auth0(credential.account),
+        (AccountApproval::Pending, token) => {
+            record_credential_refusal(CredentialRefusal::PendingApproval);
+            LocalApiAuthentication::PendingApproval(PendingCredential {
+                account: credential.account,
+                token,
+            })
+        }
+    }
 }
 
 fn oauth_access_token_allows_request(req: &Request, token: &OAuthAccessTokenRow) -> bool {
@@ -321,27 +359,109 @@ pub(crate) async fn authenticate_local_api_request(
             app_token = app.is_some();
         }
         if let Some(auth) = auth {
-            let Some(account) = auth.account else {
+            let Some(credential) = auth.account else {
                 return Ok(LocalApiAuthentication::InvalidBearer);
             };
-            return Ok(LocalApiAuthentication::OAuthToken(
-                OAuthAuthenticatedLocalAccount {
-                    account,
-                    token: auth.token,
-                },
+            return Ok(api_authentication_from_credential(
+                credential,
+                Some(auth.token),
             ));
         }
         if app_token {
             return Ok(LocalApiAuthentication::AppToken);
         }
-        return match find_auth0_local_account_with_roles(req, db, config).await {
-            Ok(Some((account, _roles))) => Ok(LocalApiAuthentication::Auth0(account)),
+        return match find_auth0_credential_account(req, db, config).await {
+            Ok(Some((credential, _roles))) => {
+                Ok(api_authentication_from_credential(credential, None))
+            }
             Ok(None) | Err(_) => Ok(LocalApiAuthentication::InvalidBearer),
         };
     }
 
-    Ok(find_authenticated_local_account(req, db, config)
+    Ok(find_auth0_credential_account(req, db, config)
         .await?
-        .map(LocalApiAuthentication::Auth0)
-        .unwrap_or(LocalApiAuthentication::None))
+        .map_or(LocalApiAuthentication::None, |(credential, _roles)| {
+            api_authentication_from_credential(credential, None)
+        }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cfwdon_domain::LocalAccountRecord;
+    use futures_util::FutureExt;
+
+    fn credential(approval: AccountApproval) -> CredentialAccount {
+        CredentialAccount {
+            account: LocalAccount::from_record(LocalAccountRecord::test_fixture("acct-1", "alice")),
+            approval,
+        }
+    }
+
+    fn token() -> OAuthAccessTokenRow {
+        OAuthAccessTokenRow {
+            access_token: "sha256:abc".to_owned(),
+            oauth_app_id: 1,
+            scopes_json: "[\"read\"]".to_owned(),
+        }
+    }
+
+    #[test]
+    fn a_pending_credential_acts_as_no_account_and_records_why() {
+        let (approved, refusal) = scope_request_auth_state(async {
+            (
+                approved_credential_account(Some(credential(AccountApproval::Approved))),
+                credential_refusal(),
+            )
+        })
+        .now_or_never()
+        .unwrap();
+        assert_eq!(
+            approved.map(|account| account.id().to_owned()).as_deref(),
+            Some("acct-1")
+        );
+        assert_eq!(refusal, None);
+
+        let (pending, refusal) = scope_request_auth_state(async {
+            (
+                approved_credential_account(Some(credential(AccountApproval::Pending))),
+                credential_refusal(),
+            )
+        })
+        .now_or_never()
+        .unwrap();
+        assert!(pending.is_none());
+        assert_eq!(refusal, Some(CredentialRefusal::PendingApproval));
+    }
+
+    #[test]
+    fn api_authentication_keeps_a_pending_account_apart() {
+        let outcome = |approval, token: Option<OAuthAccessTokenRow>| {
+            scope_request_auth_state(async move {
+                (
+                    api_authentication_from_credential(credential(approval), token),
+                    credential_refusal(),
+                )
+            })
+            .now_or_never()
+            .unwrap()
+        };
+        assert!(matches!(
+            outcome(AccountApproval::Approved, Some(token())),
+            (LocalApiAuthentication::OAuthToken(_), None)
+        ));
+        assert!(matches!(
+            outcome(AccountApproval::Approved, None),
+            (LocalApiAuthentication::Auth0(_), None)
+        ));
+        for presented in [Some(token()), None] {
+            let has_token = presented.is_some();
+            let (authentication, refusal) = outcome(AccountApproval::Pending, presented);
+            let LocalApiAuthentication::PendingApproval(pending) = authentication else {
+                panic!("a pending account must not authenticate as itself");
+            };
+            assert_eq!(pending.token.is_some(), has_token);
+            assert_eq!(refusal, Some(CredentialRefusal::PendingApproval));
+        }
+    }
 }

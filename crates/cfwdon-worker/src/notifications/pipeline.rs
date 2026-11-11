@@ -5,17 +5,21 @@
 
 use super::{
     MastodonNotificationResponse, NotificationEntry, NotificationIdentity, NotificationsQuery,
-    build_status_notification_entry, collect_notifications, load_dismissed_notification_ids,
-    load_notification_clear_marker, notification_account_matches_filter,
-    notification_api_numeric_id, notification_entry_matches_cursor_id,
-    notification_group_key_from_parts, notification_timestamp_sort_token,
-    preload_notification_statuses, push_notification_entry,
+    build_status_notification_entry, collect_notifications, limited_sender_notification_listed,
+    load_dismissed_notification_ids, load_notification_clear_marker, load_notification_policy_row,
+    notification_account_matches_filter, notification_api_numeric_id,
+    notification_entry_matches_cursor_id, notification_group_key_from_parts,
+    notification_timestamp_sort_token, notification_type_filterable, preload_notification_statuses,
+    push_notification_entry,
 };
 use crate::accounts::find_accounts_by_ids;
+use crate::federation::instance_domain_blocks;
 use crate::identity::{actor_url, remote_account_rest_id};
 use crate::responses::MastodonAccountResponse;
 use crate::statuses::{can_view_local_status, find_statuses_by_ids};
-use crate::store::relationship::list_notification_muted_actor_uris_for_account;
+use crate::store::relationship::{
+    list_notification_muted_actor_uris_for_account, silenced_authors_hidden_from,
+};
 use crate::store::remote::{RemoteActorRow, find_remote_actors_by_actor_uris};
 use crate::time_html::timestamp_to_mastodon_iso8601;
 use crate::tracked_d1::D1Database;
@@ -252,6 +256,7 @@ pub(crate) async fn collect_notification_candidates(
     )?;
     retain_undismissed_candidates(&mut candidates, &dismissed_ids, cleared_at.as_deref());
     retain_candidates_from_unmuted_actors(db, config, viewer, query, &mut candidates).await?;
+    retain_candidates_from_unlimited_senders(db, viewer, &mut candidates).await?;
     sort_candidates_newest_first(&mut candidates);
     Ok(candidates)
 }
@@ -293,6 +298,49 @@ async fn retain_candidates_from_unmuted_actors(
                     Some(actor_uri),
                 )
         }
+    });
+    Ok(())
+}
+
+/// Drops filterable notifications from silenced remote accounts the viewer
+/// does not follow, per [`limited_sender_notification_listed`].
+async fn retain_candidates_from_unlimited_senders(
+    db: &D1Database,
+    viewer: &LocalAccount,
+    candidates: &mut Vec<NotificationCandidate>,
+) -> Result<()> {
+    let senders = unique_remote_actor_uris(
+        candidates
+            .iter()
+            .filter(|candidate| notification_type_filterable(&candidate.notification_type)),
+    );
+    if senders.is_empty() || !instance_domain_blocks().await?.may_silence() {
+        return Ok(());
+    }
+    let actors = find_remote_actors_by_actor_uris(db, &senders).await?;
+    let hidden = silenced_authors_hidden_from(
+        db,
+        Some(viewer.id()),
+        senders.iter().map(|actor_uri| {
+            let domain = actors
+                .get(actor_uri)
+                .map_or("", |actor| actor.domain.as_str());
+            (domain, actor_uri.as_str())
+        }),
+    )
+    .await?;
+    if hidden.is_empty() {
+        return Ok(());
+    }
+    let policy = load_notification_policy_row(db, viewer.id()).await?;
+    candidates.retain(|candidate| match &candidate.actor {
+        Some(NotificationActorRef::Remote(actor_uri)) if hidden.contains(actor_uri) => {
+            limited_sender_notification_listed(
+                &candidate.notification_type,
+                &policy.for_limited_accounts,
+            )
+        }
+        _ => true,
     });
     Ok(())
 }

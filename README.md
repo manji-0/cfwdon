@@ -24,7 +24,7 @@ For the detailed route inventory, see [Mastodon API Compatibility](docs/mastodon
 
 | Area | Status |
 | --- | --- |
-| Stateright models | **16** models covering quote policy, quote approval, registration, status drafts, inbox replay, outbound delivery, follow requests, ActivityPub visibility, OAuth access provision, and federation request/DNS policy |
+| Stateright models | **16** models covering quote policy, quote approval, registration and its approval, status drafts, inbox replay, outbound delivery, follow requests, ActivityPub visibility, secure mode (authorized fetch), and federation request/DNS policy |
 | Refinement mapping | **16 / 16** executable checks link model actions to worker handlers and domain steps |
 | CI gate | `just ci` runs `cargo test --workspace`, which includes `verify_models()` |
 

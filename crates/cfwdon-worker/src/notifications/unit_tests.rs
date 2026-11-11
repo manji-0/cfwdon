@@ -2,7 +2,8 @@ use crate::notifications::{
     NotificationEntry, NotificationsQuery, build_notifications_v2_document,
     count_unread_notification_entries, default_grouped_notification_types,
     filter_notification_entries_by_query, is_admin_account, is_admin_authorized,
-    notification_api_numeric_id, notification_timestamp_sort_token, notification_v1_value,
+    limited_sender_notification_listed, notification_api_numeric_id,
+    notification_timestamp_sort_token, notification_v1_value,
 };
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{LocalAccount, LocalAccountRecord};
@@ -384,4 +385,26 @@ fn legacy_hash_ids_still_resolve_inside_the_window() {
     let page = filter_notification_entries_by_query(entries, &query);
     assert_eq!(page.len(), 1);
     assert_eq!(page[0].id, "n1");
+}
+
+#[test]
+fn silenced_senders_keep_only_unfilterable_notifications_unless_accepted() {
+    for kind in [
+        "mention",
+        "reblog",
+        "favourite",
+        "follow",
+        "follow_request",
+        "quote",
+    ] {
+        assert!(
+            !limited_sender_notification_listed(kind, "filter"),
+            "{kind}"
+        );
+        assert!(!limited_sender_notification_listed(kind, "drop"), "{kind}");
+        assert!(limited_sender_notification_listed(kind, "accept"), "{kind}");
+    }
+    for kind in ["status", "update", "poll", "quoted_update", "admin.sign_up"] {
+        assert!(limited_sender_notification_listed(kind, "drop"), "{kind}");
+    }
 }

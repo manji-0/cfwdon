@@ -315,6 +315,9 @@ pub(crate) async fn search_local_accounts(
           AND f.follower_account_id = ?1
           AND f.state = 'accepted'
          WHERE ({search_clause_list})
+           AND NOT EXISTS (
+               SELECT 1 FROM pending_account_approvals p WHERE p.account_id = a.id
+           )
          ORDER BY a.username ASC
          LIMIT ?{}
          OFFSET ?{}",
@@ -326,6 +329,9 @@ pub(crate) async fn search_local_accounts(
             "SELECT id, username, access_email, display_name, bio_html, bio_text, fields_json, locked, bot, discoverable, default_post_visibility, default_quote_policy, default_sensitive, default_language, avatar_object_key, avatar_content_type, header_object_key, header_content_type, '' AS private_key_jwk, public_key_pem, created_at
          FROM accounts
          WHERE ({search_clause_list})
+           AND NOT EXISTS (
+               SELECT 1 FROM pending_account_approvals p WHERE p.account_id = accounts.id
+           )
          ORDER BY username ASC
          LIMIT ?{}
          OFFSET ?{}",

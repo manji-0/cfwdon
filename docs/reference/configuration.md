@@ -65,7 +65,7 @@ After deploy, responses include `cf-placement` (for example `remote-SIN`) when p
 | `INSTANCE_LANGUAGES` | Optional | app default | Comma-separated language list. |
 | `CONTACT_EMAIL` | Optional | unset | Contact metadata for instance payloads. |
 | `INSTANCE_THUMBNAIL_URL` | Optional | unset | Public thumbnail URL. |
-| `ADMIN_EMAILS` | Optional | empty | Comma-separated admin e-mail list for admin notifications. |
+| `ADMIN_EMAILS` | Optional | empty | Comma-separated admin e-mail list for admin notifications. An approved account with one of these e-mails also gets `/admin`. It never approves a sign-up: sign-up e-mails are not verified. |
 | `MEDIA_PUBLIC_BASE_URL` | Required for production media URLs | unset | R2 custom domain base URL. A trailing slash is trimmed. |
 
 Keep the `MEDIA_PUBLIC_BASE_URL` domain publicly reachable. Mastodon entity payloads use this value as the canonical media URL.
@@ -173,6 +173,14 @@ Each value is one of `public`, `authenticated`, or `disabled`. Missing or invali
 | Var | Required | Default / Behavior | Notes |
 | --- | --- | --- | --- |
 | `AUTHORIZED_FETCH` | Optional | off | `true`, `1`, `yes`, or `on` turns on secure mode as described above. Any other value leaves it off. |
+
+## Registration Vars
+<!-- derived-from ../../wrangler.toml.example -->
+<!-- constrained-by ../architecture/cfwdon-architecture.md#registration-approval -->
+
+| Var | Required | Default / Behavior | Notes |
+| --- | --- | --- | --- |
+| `REGISTRATIONS_MODE` | Optional | `approved` | Mastodon's `registrations_mode`. `open` takes `POST /api/v1/accounts` sign-ups without review. `approved` holds each one for an admin to approve and sets `approval_required` in the instance documents. `none` refuses every sign-up with `403`, and the instance and NodeInfo documents report registrations as closed. Unset or blank means `approved`, so an instance takes no unreviewed sign-ups until its operator sets `open`. Any other value also applies `approved`, and the Worker logs an error. IP blocks with `sign_up_requires_approval` hold sign-ups from their ranges in `open` mode too. The first admin is approved from the command line; see [The First Admin](../operations/launch-checklist.md#the-first-admin). |
 
 ## Logging Vars
 

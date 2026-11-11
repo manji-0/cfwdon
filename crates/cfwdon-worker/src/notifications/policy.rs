@@ -1,4 +1,8 @@
-use super::resolve_authenticated_notification_context;
+use super::{
+    limited_sender_notification_listed, notification_type_filterable,
+    resolve_authenticated_notification_context,
+};
+use crate::store::relationship::silenced_authors_hidden_from;
 use crate::tracked_d1::D1Database;
 use serde::Deserialize;
 use worker::d1::D1Type;
@@ -194,4 +198,36 @@ pub(crate) async fn update_notifications_policy_response(
         .await?;
 
     Response::from_json(&build_notification_policy_document(&next))
+}
+
+/// Whether one notification from a remote sender reaches `recipient_account_id`
+/// under the silence rule the REST listing applies. Streaming and Web Push ask
+/// this when they send; the listing asks it again on every read, because
+/// cfwdon derives notifications from the activity tables instead of storing
+/// them. So, unlike Mastodon's create-time `NotifyService` filter, a policy
+/// change or a new follow also applies to notifications that already exist.
+pub(crate) async fn remote_sender_notification_listed(
+    db: &D1Database,
+    recipient_account_id: &str,
+    notification_type: &str,
+    sender_domain: &str,
+    sender_actor_uri: &str,
+) -> Result<bool> {
+    if !notification_type_filterable(notification_type) {
+        return Ok(true);
+    }
+    let hidden = silenced_authors_hidden_from(
+        db,
+        Some(recipient_account_id),
+        [(sender_domain, sender_actor_uri)],
+    )
+    .await?;
+    if hidden.is_empty() {
+        return Ok(true);
+    }
+    let policy = load_notification_policy_row(db, recipient_account_id).await?;
+    Ok(limited_sender_notification_listed(
+        notification_type,
+        &policy.for_limited_accounts,
+    ))
 }

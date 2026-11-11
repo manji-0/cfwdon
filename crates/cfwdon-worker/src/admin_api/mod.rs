@@ -1,4 +1,6 @@
 use crate::admin_ui::{admin_ui_response, is_admin_ui_path};
+use accounts::admin_pending_accounts_response;
+pub(crate) use accounts::{admin_account_approve_response, admin_account_reject_response};
 use dashboard::admin_dashboard_response;
 use deliveries::{admin_deliveries_response, admin_retry_delivery_response};
 pub(crate) use domain_blocks::{
@@ -65,6 +67,10 @@ fn admin_api_router() -> Router<'static, ()> {
         .get_async("/api/cfwdon/admin/dashboard", |req, ctx| async move {
             admin_dashboard_response(req, ctx).await
         })
+        .get_async(
+            "/api/cfwdon/admin/accounts/pending",
+            |req, ctx| async move { admin_pending_accounts_response(req, ctx).await },
+        )
         .get_async("/api/cfwdon/admin/reports", |req, ctx| async move {
             admin_reports_response(req, ctx).await
         })
@@ -151,6 +157,7 @@ fn admin_api_router() -> Router<'static, ()> {
         )
 }
 
+mod accounts;
 mod dashboard;
 mod deliveries;
 mod domain_blocks;
