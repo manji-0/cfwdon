@@ -135,14 +135,17 @@ pub(crate) async fn fetch_signed_activitypub_document(
     )))
 }
 
-/// Whether a failed signed GET may be retried unsigned. Public ActivityPub
-/// GETs fall back whenever the signed attempt fails: auth rejection (401/403)
-/// is the common case, but some remotes (and Cloudflare WAF in front of them)
-/// return other status codes or non-JSON challenge bodies that still leave the
-/// unsigned public document reachable. A server in secure mode refuses the
-/// unsigned retry too, so the fallback reads nothing it would not serve
-/// anyone.
-fn signed_fetch_allows_unsigned_fallback(error: &Error) -> bool {
+/// Whether a failed signed GET may be retried unsigned. Never in secure mode,
+/// as Mastodon never retries unsigned: the retry would double the traffic of
+/// every failed fetch, key fetches included, and a remote that refused the
+/// signed GET has no reason to answer an unsigned one. Outside secure mode,
+/// auth rejection (401/403) is the common case, but some remotes (and
+/// Cloudflare WAF in front of them) return other status codes or non-JSON
+/// challenge bodies that still leave the unsigned public document reachable.
+fn signed_fetch_allows_unsigned_fallback(secure_mode: bool, error: &Error) -> bool {
+    if secure_mode {
+        return false;
+    }
     let message = error.to_string();
     message.contains("HTTP ")
         || message.contains("error decoding response body")
@@ -151,8 +154,8 @@ fn signed_fetch_allows_unsigned_fallback(error: &Error) -> bool {
         || message.contains("EOF while parsing")
 }
 
-/// A GET signed as the instance actor, retried unsigned when the remote
-/// rejects the signature or answers something other than JSON.
+/// A GET signed as the instance actor, retried unsigned when
+/// `signed_fetch_allows_unsigned_fallback` allows it.
 pub(crate) async fn fetch_activitypub_document_as_instance(
     config: &AppConfig,
     db: &D1Database,
@@ -160,7 +163,7 @@ pub(crate) async fn fetch_activitypub_document_as_instance(
 ) -> Result<serde_json::Value> {
     match fetch_signed_activitypub_document(config, db, url).await {
         Ok(document) => Ok(document),
-        Err(error) if signed_fetch_allows_unsigned_fallback(&error) => {
+        Err(error) if signed_fetch_allows_unsigned_fallback(config.authorized_fetch, &error) => {
             log_json_event(serde_json::json!({
                 "event": "signed_remote_fetch_fallback",
                 "url": url,
@@ -177,22 +180,32 @@ pub(crate) async fn fetch_activitypub_document_as_instance(
 /// included. A remote in secure mode verifies such a fetch with this server's
 /// `/actor`, which stays public, so a key fetch never waits on one of its own.
 pub(crate) fn install_secure_mode_fetch_signing(env: &Env, config: &AppConfig) {
-    let fetcher = if config.authorized_fetch {
-        env.d1(&config.database_binding).ok().map(|binding| {
-            let db = D1Database::new(binding);
-            let config = config.clone();
-            Rc::new(move |url: String| {
-                let db = db.detached();
-                let config = config.clone();
-                Box::pin(
-                    async move { fetch_activitypub_document_as_instance(&config, &db, &url).await },
-                ) as futures_util::future::LocalBoxFuture<'static, _>
-            }) as SecureModeFetcher
-        })
-    } else {
-        None
+    if !config.authorized_fetch {
+        install_secure_mode_fetcher(None);
+        return;
+    }
+    let binding = match env.d1(&config.database_binding) {
+        Ok(binding) => binding,
+        Err(error) => {
+            log_json_event(serde_json::json!({
+                "event": "secure_mode_fetch_signing_unavailable",
+                "level": "warn",
+                "binding": config.database_binding,
+                "error": error.to_string(),
+                "message": "AUTHORIZED_FETCH is on but the instance actor key cannot be read; remote ActivityPub GETs go out unsigned",
+            }));
+            install_secure_mode_fetcher(None);
+            return;
+        }
     };
-    install_secure_mode_fetcher(fetcher);
+    let db = D1Database::new(binding);
+    let config = config.clone();
+    install_secure_mode_fetcher(Some(Rc::new(move |url: String| {
+        let db = db.detached();
+        let config = config.clone();
+        Box::pin(async move { fetch_activitypub_document_as_instance(&config, &db, &url).await })
+            as futures_util::future::LocalBoxFuture<'static, _>
+    }) as SecureModeFetcher));
 }
 
 /// Who signed a GET of a local ActivityPub resource (an "authorized fetch").
@@ -471,19 +484,28 @@ mod tests {
     }
 
     #[test]
-    fn signed_fetch_allows_unsigned_fallback_for_auth_failures() {
-        assert!(signed_fetch_allows_unsigned_fallback(&Error::RustError(
-            "failed to fetch signed remote document https://x: HTTP 401".to_owned()
-        )));
-        assert!(signed_fetch_allows_unsigned_fallback(&Error::RustError(
-            "failed to fetch signed remote document https://x: HTTP 523".to_owned()
-        )));
-        assert!(signed_fetch_allows_unsigned_fallback(&Error::RustError(
-            "error decoding response body: expected value at line 1 column 1".to_owned()
-        )));
-        assert!(!signed_fetch_allows_unsigned_fallback(&Error::RustError(
-            "remote fetch blocked for private address".to_owned()
-        )));
+    fn signed_fetch_falls_back_unsigned_only_outside_secure_mode() {
+        let failures = [
+            "failed to fetch signed remote document https://x: HTTP 401",
+            "failed to fetch signed remote document https://x: HTTP 404",
+            "failed to fetch signed remote document https://x: HTTP 523",
+            "error decoding response body: expected value at line 1 column 1",
+        ];
+        for failure in failures {
+            let error = Error::RustError(failure.to_owned());
+            assert!(
+                signed_fetch_allows_unsigned_fallback(false, &error),
+                "{failure}"
+            );
+            assert!(
+                !signed_fetch_allows_unsigned_fallback(true, &error),
+                "{failure}"
+            );
+        }
+        assert!(!signed_fetch_allows_unsigned_fallback(
+            false,
+            &Error::RustError("remote fetch blocked for private address".to_owned())
+        ));
     }
 
     #[test]

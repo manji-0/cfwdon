@@ -39,7 +39,8 @@ pub(crate) enum RemoteFetchAuthMode {
     /// and WAF paths). In secure mode every fetch is signed regardless; see
     /// `install_secure_mode_fetch_signing`.
     Public,
-    /// Prefer a GET signed as the instance actor, then fall back to unsigned.
+    /// Prefer a GET signed as the instance actor, then fall back to unsigned
+    /// outside secure mode.
     Authorized,
 }
 
