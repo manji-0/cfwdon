@@ -12,6 +12,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MIGRATIONS_DIR = REPO_ROOT / "migrations"
+REPORT_STORE_RS = REPO_ROOT / "crates/cfwdon-worker/src/reports/store.rs"
 MIGRATION_PREFIX_RE = re.compile(r"^(\d{3})_")
 
 # These duplicate prefixes already exist in the checked-in migration history.
@@ -211,6 +212,55 @@ def check_integrity_guards(conn: sqlite3.Connection) -> None:
     )
 
 
+def rust_sql_const(source: Path, name: str) -> str:
+    """The text of a `const NAME: &str = "...";` SQL literal, so the check runs
+    the statement the Worker sends rather than a copy of it."""
+    match = re.search(rf'const {name}: &str =\s*"(.*?)";', source.read_text(), re.DOTALL)
+    if match is None:
+        raise RuntimeError(f"{source.relative_to(REPO_ROOT)} has no const {name}")
+    return match.group(1)
+
+
+def check_inbound_flag_reports(conn: sqlite3.Connection) -> None:
+    """An inbound `Flag` files one report per target, and a redelivery of the
+    same `Flag` id files nothing new but still links its statuses."""
+    insert_sql = rust_sql_const(REPORT_STORE_RS, "INSERT_INBOUND_FLAG_REPORT_SQL")
+    link_sql = rust_sql_const(REPORT_STORE_RS, "LINK_INBOUND_FLAG_REPORT_STATUSES_SQL")
+    reporter = "r_aHR0cHM6Ly9yZW1vdGUuZXhhbXBsZS9hY3Rvcg"
+    flag_uri = "https://remote.example/flags/1"
+
+    def file(report_id: str, uri: str | None, target: str, status_ids: str) -> int:
+        changes = conn.execute(
+            insert_sql, (report_id, reporter, target, "spam", uri, "remote.example")
+        ).rowcount
+        conn.execute(link_sql, (report_id, uri, target, status_ids))
+        return changes
+
+    def links(report_id: str) -> list[str]:
+        rows = conn.execute(
+            "SELECT status_id FROM report_statuses WHERE report_id = ? ORDER BY status_id",
+            (report_id,),
+        )
+        return [row[0] for row in rows]
+
+    if file("flag-1", flag_uri, "acct-1", '["status-1"]') != 1:
+        raise RuntimeError("inbound Flag did not file a report")
+    if file("flag-2", flag_uri, "acct-1", '["status-1","status-2"]') != 0:
+        raise RuntimeError("redelivered Flag filed a second report")
+    if links("flag-1") != ["status-1", "status-2"] or links("flag-2"):
+        raise RuntimeError(f"redelivered Flag linked statuses wrongly: {links('flag-1')}")
+    if file("flag-3", flag_uri, "acct-2", "[]") != 1:
+        raise RuntimeError("a Flag naming a second account did not file its report")
+    if file("flag-4", None, "acct-1", '["status-1"]') != 1 or links("flag-4") != ["status-1"]:
+        raise RuntimeError("a Flag without a trusted id did not file its own report")
+    row = conn.execute(
+        "SELECT account_id, category, forward, origin_domain, uri FROM reports WHERE id = ?",
+        ("flag-1",),
+    ).fetchone()
+    if row != (reporter, "other", 0, "remote.example", flag_uri):
+        raise RuntimeError(f"inbound Flag report stored as {row}")
+
+
 def main() -> int:
     files = migration_files()
     try:
@@ -219,6 +269,7 @@ def main() -> int:
             apply_migrations(conn, files)
             check_database(conn)
             check_integrity_guards(conn)
+            check_inbound_flag_reports(conn)
     except RuntimeError as error:
         print(f"migration check failed: {error}", file=sys.stderr)
         return 1

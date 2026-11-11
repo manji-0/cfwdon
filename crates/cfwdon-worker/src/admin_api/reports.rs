@@ -35,6 +35,8 @@ pub(crate) struct AdminReportResponse {
     action_taken_at: Option<String>,
     status_ids: Vec<String>,
     target_account: AdminReportTargetResponse,
+    /// The server that sent the report as a `Flag`; `None` for a local report.
+    origin_domain: Option<String>,
 }
 
 pub(crate) async fn admin_reports_response(
@@ -131,6 +133,7 @@ pub(crate) async fn build_admin_report_response(
             display_name,
             acct,
         },
+        origin_domain: report.origin_domain.clone(),
     })
 }
 

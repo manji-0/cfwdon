@@ -82,6 +82,15 @@ pub(crate) fn extract_inbox_target_username(
         .any(|value| matches!(*value, "Create" | "Update"))
     {
         first_local_audience_username(config, activity)
+    } else if types.contains(&"Flag") {
+        // A `Flag` carries no audience; the accounts and statuses it names are
+        // what it is delivered for.
+        let mut object_uris = Vec::new();
+        collect_activitypub_uris(activity.get("object"), &mut object_uris);
+        object_uris.iter().find_map(|uri| {
+            local_username_from_actor_uri(config, uri)
+                .or_else(|| local_username_from_status_uri(config, uri))
+        })
     } else {
         None
     }

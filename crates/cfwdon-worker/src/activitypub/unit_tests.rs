@@ -829,3 +829,32 @@ fn activitypub_actor_type_detection_matches_supported_profile_types() {
     assert!(!is_activitypub_actor_type(Some("Note")));
     assert!(!is_activitypub_actor_type(None));
 }
+
+#[test]
+fn extract_inbox_target_username_reads_flag_objects() {
+    let config = AppConfig::new("https://social.example", "cfwdon", "test instance");
+    assert_eq!(
+        extract_inbox_target_username(
+            &config,
+            &serde_json::json!({
+                "type": "Flag",
+                "object": [
+                    "https://remote.example/users/carol",
+                    "https://social.example/users/alice/statuses/status-1",
+                    "https://social.example/users/bob"
+                ]
+            })
+        ),
+        Some("alice".to_owned())
+    );
+    assert_eq!(
+        extract_inbox_target_username(
+            &config,
+            &serde_json::json!({
+                "type": "Flag",
+                "object": "https://remote.example/users/carol"
+            })
+        ),
+        None
+    );
+}
