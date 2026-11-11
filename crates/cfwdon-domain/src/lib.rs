@@ -70,7 +70,7 @@ pub use instance::{InstanceCapabilities, InstanceSummary, SoftwareInfo};
 pub use media::{MediaAttachment, StatusBoundMedia, StoredMediaAttachmentIntent, UploadedMedia};
 pub use media_metadata::{
     MalformedMedia, MediaContainer, MetadataStrip, StrippedMedia, UnstrippableUpload,
-    strip_media_metadata, strip_upload_metadata,
+    restripped_stored_media, strip_media_metadata, strip_upload_metadata,
 };
 pub use quote::{
     OwnerQuoteAction, QuoteApprovalPolicy, QuoteState, merged_quote_state_for_remote_upsert,

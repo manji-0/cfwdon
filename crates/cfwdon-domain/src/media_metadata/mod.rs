@@ -125,6 +125,18 @@ pub fn strip_media_metadata(bytes: &[u8]) -> Result<MetadataStrip, MalformedMedi
     }
 }
 
+/// The bytes to write in place of an already stored object, judged by the
+/// bytes as on upload: `None` when the object carries nothing to strip
+/// (already clean, or a format without a stripper, such as GIF). Unlike an
+/// upload, the declared type is not checked: the object is already public,
+/// and only its metadata goes.
+pub fn restripped_stored_media(bytes: &[u8]) -> Result<Option<Vec<u8>>, MalformedMedia> {
+    Ok(match strip_media_metadata(bytes)? {
+        MetadataStrip::Stripped(stripped) if stripped.bytes != bytes => Some(stripped.bytes),
+        _ => None,
+    })
+}
+
 /// Why an upload cannot be stored without its metadata.
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum UnstrippableUpload {
