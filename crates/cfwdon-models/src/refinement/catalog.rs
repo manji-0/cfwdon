@@ -221,7 +221,7 @@ pub const REFINEMENT_CATALOG: &[RefinementEntry] = &[
         model: "outbox_delivery_pool",
         domain_module: "cfwdon_domain::delivery",
         implementation_sites: &["crates/cfwdon-worker/src/delivery.rs"],
-        abstraction: "eight OutboundDeliverySlot buckets by attempt_count",
+        abstraction: "eight OutboundDeliverySlot buckets by attempt_count over the last five attempts",
         operations: &[
             OperationMapping {
                 model_action: "SucceedAt",

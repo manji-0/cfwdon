@@ -5,8 +5,8 @@ use cfwdon_domain::{
 };
 
 use crate::outbox_delivery_pool::{
-    OutboxDeliveryPoolAction, OutboxDeliveryPoolModel, OutboxDeliveryPoolModelState,
-    apply_outbox_delivery_pool_outcome,
+    MODELED_ATTEMPT_WINDOW, OutboxDeliveryPoolAction, OutboxDeliveryPoolModel,
+    OutboxDeliveryPoolModelState, apply_outbox_delivery_pool_outcome,
 };
 use crate::refinement::verify::{assert_model_matches_domain, assert_worker_refinement};
 use stateright::Model;
@@ -83,7 +83,7 @@ pub(crate) fn check_outbox_delivery_pool_refinement() {
         OutboxDeliveryPoolModel.init_states(),
         |state| {
             let mut actions = Vec::new();
-            for attempt_index in 0..DELIVERY_MAX_ATTEMPTS as u8 {
+            for attempt_index in 0..MODELED_ATTEMPT_WINDOW as u8 {
                 if state.has_queued_slots_at(attempt_index) {
                     actions.push(OutboxDeliveryPoolAction::SucceedAt(attempt_index));
                     actions.push(OutboxDeliveryPoolAction::FailAt(attempt_index));

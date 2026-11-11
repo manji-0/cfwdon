@@ -6,14 +6,22 @@ use cfwdon_domain::{
 use stateright::{Checker, Model, Property};
 
 const POOL_SIZE: u8 = OUTBOX_DELIVERY_CONCURRENCY as u8;
-const MAX_QUEUED_ATTEMPT_INDEX: usize = (DELIVERY_MAX_ATTEMPTS - 1) as usize;
+/// Attempt counts the pool model tracks: the last few before the terminal
+/// threshold. Bucketing eight slots over all 17 attempts grows the state space
+/// from about 3k to 1.5M states; earlier attempts take the same queued-to-queued
+/// step, which the refinement check covers for every attempt count.
+pub(crate) const MODELED_ATTEMPT_WINDOW: usize = 5;
+/// The attempt count the pool starts at, and the count of `queued_at[0]`.
+pub(crate) const FIRST_MODELED_ATTEMPT: u32 = DELIVERY_MAX_ATTEMPTS - MODELED_ATTEMPT_WINDOW as u32;
+const MAX_QUEUED_ATTEMPT_INDEX: usize = MODELED_ATTEMPT_WINDOW - 1;
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct OutboxDeliveryPoolModel;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) struct OutboxDeliveryPoolModelState {
-    queued_at: [u8; DELIVERY_MAX_ATTEMPTS as usize],
+    /// Queued slots by attempt count, offset by [`FIRST_MODELED_ATTEMPT`].
+    queued_at: [u8; MODELED_ATTEMPT_WINDOW],
     delivered: u8,
     failed: u8,
 }
@@ -50,13 +58,13 @@ pub(crate) fn apply_outbox_delivery_pool_outcome(
 
     let slot = OutboundDeliverySlot {
         state: OutboundActivityState::Queued,
-        attempt_count: attempt_index as u32,
+        attempt_count: FIRST_MODELED_ATTEMPT + attempt_index as u32,
     };
     let next = outbound_delivery_slot_after_attempt(slot, outcome);
     state.queued_at[index] -= 1;
     match next.state {
         OutboundActivityState::Queued => {
-            let next_index = next.attempt_count as usize;
+            let next_index = (next.attempt_count - FIRST_MODELED_ATTEMPT) as usize;
             if next_index < state.queued_at.len() {
                 state.queued_at[next_index] += 1;
             }
@@ -73,7 +81,7 @@ impl Model for OutboxDeliveryPoolModel {
 
     fn init_states(&self) -> Vec<Self::State> {
         let mut state = OutboxDeliveryPoolModelState {
-            queued_at: [0; DELIVERY_MAX_ATTEMPTS as usize],
+            queued_at: [0; MODELED_ATTEMPT_WINDOW],
             delivered: 0,
             failed: 0,
         };
@@ -121,18 +129,16 @@ impl Model for OutboxDeliveryPoolModel {
             Property::always(
                 "queued_slots_respect_retry_threshold",
                 |_, state: &OutboxDeliveryPoolModelState| {
-                    state
-                        .queued_at
-                        .iter()
-                        .enumerate()
-                        .all(|(index, count)| *count == 0 || (index as u32) < DELIVERY_MAX_ATTEMPTS)
+                    state.queued_at.iter().enumerate().all(|(index, count)| {
+                        *count == 0
+                            || FIRST_MODELED_ATTEMPT + (index as u32) < DELIVERY_MAX_ATTEMPTS
+                    })
                 },
             ),
             Property::always(
                 "failed_slots_imply_terminal_retry_count",
                 |_, state: &OutboxDeliveryPoolModelState| {
-                    state.failed == 0
-                        || state.queued_at[(DELIVERY_MAX_ATTEMPTS - 1) as usize] < POOL_SIZE
+                    state.failed == 0 || state.queued_at[MAX_QUEUED_ATTEMPT_INDEX] < POOL_SIZE
                 },
             ),
             Property::always(

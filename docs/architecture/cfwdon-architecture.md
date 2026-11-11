@@ -103,6 +103,8 @@ Route-level Mastodon coverage is tracked in `docs/mastodon-api-compat/`. That in
 
 ActivityPub delivery is queue-oriented. Local public/unlisted creates, deletes, interactions, profile updates, poll updates, and follow-related activities enqueue outbound rows in D1. A Cloudflare Queue (`OUTBOX_PROCESS_QUEUE`) is kicked after successful write requests, from `POST /internal/outbox/process`, and from the hourly cron when work is pending; the queue consumer then fans out and delivers. Delivery rows are keyed to avoid duplicate target fan-out, and retry state is persisted in D1.
 
+Failed deliveries follow Mastodon's retry policy (`cfwdon_domain::delivery`). A 2xx is delivered. A 4xx other than 401, 408 and 429, or a 501, fails the row at once. Anything else is retried with Sidekiq's backoff (`count^4 + 15` seconds plus jitter) for up to 17 attempts, about two days. On a 429 or 503 the remote's `Retry-After` (delta-seconds or HTTP-date) replaces the backoff when it is longer, capped at 12 hours.
+
 ## Operational Plan
 <!-- constrained-by ../reference/configuration.md#cloudflare-bindings -->
 <!-- constrained-by ./web-ui-foreground-resume.md -->

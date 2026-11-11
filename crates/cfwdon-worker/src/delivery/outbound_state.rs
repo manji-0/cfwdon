@@ -4,7 +4,8 @@ use worker::Result;
 use worker::d1::D1Type;
 
 use cfwdon_domain::{
-    RemoteFollowState, delivery_retry_delay_modifier, outbound_terminal_failure_follow_state,
+    RemoteFollowState, delivery_retry_delay_modifier, delivery_retry_delay_seconds,
+    outbound_terminal_failure_follow_state,
 };
 
 use super::{D1Database, OUTBOX_IN_FLIGHT_STALE_MODIFIER};
@@ -161,11 +162,16 @@ pub(crate) async fn reschedule_outbound_activity(
     db: &D1Database,
     activity_id: &str,
     next_attempt: u32,
+    retry_after_seconds: Option<u64>,
 ) -> Result<bool> {
-    let delay = delivery_retry_delay_modifier(next_attempt);
+    let delay = delivery_retry_delay_modifier(delivery_retry_delay_seconds(
+        next_attempt,
+        js_sys::Math::random(),
+        retry_after_seconds,
+    ));
     let bindings = [
         D1Type::Integer(next_attempt as i32),
-        D1Type::Text(delay),
+        D1Type::Text(&delay),
         D1Type::Text(activity_id),
     ];
     let result = db

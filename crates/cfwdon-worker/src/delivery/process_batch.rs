@@ -245,7 +245,14 @@ async fn process_claimed_target_outbox_deliveries(
                     {
                         summary.failed += 1;
                     }
-                } else if reschedule_outbox_delivery(db, &delivery.id, next_attempt).await? {
+                } else if reschedule_outbox_delivery(
+                    db,
+                    &delivery.id,
+                    next_attempt,
+                    error.retry_after_seconds,
+                )
+                .await?
+                {
                     summary.failed += 1;
                 }
             }
@@ -419,7 +426,14 @@ async fn process_claimed_outbound_activities(
                     reconcile_outbound_activity_terminal_failure(db, &delivery, next_attempt)
                         .await?;
                     summary.failed += 1;
-                } else if reschedule_outbound_activity(db, &delivery.id, next_attempt).await? {
+                } else if reschedule_outbound_activity(
+                    db,
+                    &delivery.id,
+                    next_attempt,
+                    error.retry_after_seconds,
+                )
+                .await?
+                {
                     summary.failed += 1;
                 }
             }

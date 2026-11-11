@@ -1,7 +1,8 @@
 use super::signatures::{ACTIVITYPUB_ACCEPT, ACTIVITYPUB_CONTENT_TYPE, signed_post_signing_string};
 use crate::federation::{parse_http_url_parts, parse_remote_http_url, validate_remote_fetch_url};
 use crate::http::{
-    load_account_signing_key, now_http_date_string, sha256_http_digest, sign_http_signature,
+    load_account_signing_key, now_http_date_string, parse_activitypub_request_date_ms,
+    sha256_http_digest, sign_http_signature,
 };
 use crate::identity::public_key_id;
 use crate::tracked_d1::D1Database;
@@ -14,6 +15,8 @@ use worker::{Fetch, Headers, Method, Request, RequestInit, RequestRedirect};
 pub(crate) struct SignedDeliveryFailure {
     pub(crate) outcome: cfwdon_domain::DeliveryAttemptOutcome,
     pub(crate) detail: String,
+    /// The remote's `Retry-After`, in seconds, on a 429 or 503.
+    pub(crate) retry_after_seconds: Option<u64>,
 }
 
 impl SignedDeliveryFailure {
@@ -21,6 +24,7 @@ impl SignedDeliveryFailure {
         Self {
             outcome: cfwdon_domain::DeliveryAttemptOutcome::Failure,
             detail: detail.into(),
+            retry_after_seconds: None,
         }
     }
 
@@ -28,6 +32,7 @@ impl SignedDeliveryFailure {
         Self {
             outcome: cfwdon_domain::DeliveryAttemptOutcome::PermanentFailure,
             detail: detail.into(),
+            retry_after_seconds: None,
         }
     }
 
@@ -155,7 +160,26 @@ async fn dispatch_signed_post(request: SignedPostRequest) -> Result<(), SignedDe
             } else {
                 format!("remote inbox rejected activity with HTTP {status}")
             };
-            Err(SignedDeliveryFailure::retryable(detail))
+            let retry_after_seconds = if cfwdon_domain::delivery_status_honors_retry_after(status) {
+                response
+                    .headers()
+                    .get("Retry-After")
+                    .ok()
+                    .flatten()
+                    .and_then(|value| {
+                        cfwdon_domain::retry_after_seconds(
+                            &value,
+                            js_sys::Date::now(),
+                            parse_activitypub_request_date_ms,
+                        )
+                    })
+            } else {
+                None
+            };
+            Err(SignedDeliveryFailure {
+                retry_after_seconds,
+                ..SignedDeliveryFailure::retryable(detail)
+            })
         }
     }
 }
