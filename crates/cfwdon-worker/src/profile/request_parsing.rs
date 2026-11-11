@@ -5,6 +5,7 @@ use crate::runtime_config::MAX_IMAGE_UPLOAD_BYTES;
 use crate::statuses::normalize_quote_approval_policy;
 use crate::store::media::{MediaKind, classify_media_kind};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
+use cfwdon_domain::strip_upload_metadata;
 use serde::Deserialize;
 use serde::de::Deserializer;
 use std::collections::BTreeMap;
@@ -439,11 +440,23 @@ async fn parse_profile_media_upload(
         ));
     }
 
-    Ok(Some(ProfileMediaUpload {
+    stripped_profile_media(object_kind, content_type, bytes).map(Some)
+}
+
+/// Avatars and headers are stored without EXIF, XMP and the like, as media
+/// attachments are.
+fn stripped_profile_media(
+    object_kind: &'static str,
+    content_type: String,
+    bytes: Vec<u8>,
+) -> std::result::Result<ProfileMediaUpload, String> {
+    let bytes = strip_upload_metadata(&content_type, bytes)
+        .map_err(|error| format!("{object_kind} is not a readable {content_type} file: {error}"))?;
+    Ok(ProfileMediaUpload {
         bytes,
         content_type,
         object_kind,
-    }))
+    })
 }
 
 fn parse_profile_media_data_url(
@@ -488,11 +501,7 @@ fn parse_profile_media_data_url(
         ));
     }
 
-    Ok(Some(ProfileMediaUpload {
-        bytes,
-        content_type,
-        object_kind,
-    }))
+    stripped_profile_media(object_kind, content_type, bytes).map(Some)
 }
 
 #[cfg(test)]
@@ -502,6 +511,7 @@ mod tests {
         UpdateCredentialsSource, normalize_attribution_domains,
         normalize_update_credentials_request, parse_profile_media_data_url, request_is_json,
     };
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
 
     #[test]
     fn update_credentials_accepts_json_fields_attributes_map() {
@@ -584,15 +594,27 @@ mod tests {
         assert!(normalize_attribution_domains(domains).is_err());
     }
 
+    const PHOTO_WITH_GPS: &[u8] =
+        include_bytes!("../../../cfwdon-domain/src/media_metadata/fixtures/photo.png");
+
     #[test]
-    fn profile_media_upload_accepts_data_url_field() {
-        let upload = parse_profile_media_data_url("data:image/png;base64,aGVsbG8=", "avatar")
+    fn profile_media_upload_accepts_data_url_field_without_its_metadata() {
+        let data_url = format!("data:image/png;base64,{}", STANDARD.encode(PHOTO_WITH_GPS));
+        let upload = parse_profile_media_data_url(&data_url, "avatar")
             .expect("data URL should parse")
             .expect("data URL should produce upload");
 
-        assert_eq!(upload.bytes, b"hello");
+        assert!(upload.bytes.starts_with(b"\x89PNG"));
+        assert!(!upload.bytes.windows(10).any(|w| w == b"secret-gps"));
         assert_eq!(upload.content_type, "image/png");
         assert_eq!(upload.object_kind, "avatar");
+    }
+
+    #[test]
+    fn profile_media_upload_refuses_bytes_that_are_not_the_declared_image() {
+        let error = parse_profile_media_data_url("data:image/png;base64,aGVsbG8=", "avatar")
+            .expect_err("not a PNG");
+        assert!(error.starts_with("avatar is not a readable image/png file"));
     }
 
     #[test]

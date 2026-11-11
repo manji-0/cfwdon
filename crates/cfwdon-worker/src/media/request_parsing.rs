@@ -1,6 +1,7 @@
 use crate::media::UpdateMediaRequest;
 use crate::runtime_config::{MAX_AV_UPLOAD_BYTES, MAX_IMAGE_UPLOAD_BYTES};
 use crate::store::media::{MediaKind, MediaUploadDraft, classify_media_kind, media_kind_label};
+use cfwdon_domain::strip_upload_metadata;
 use worker::{FormEntry, Request};
 
 pub(crate) async fn parse_media_upload(
@@ -60,6 +61,11 @@ pub(crate) async fn parse_media_upload(
         ));
     }
 
+    // EXIF with its GPS position, XMP, comments and a video's location and
+    // device tags never reach the bucket; a file that cannot be rewritten
+    // without them is refused.
+    let bytes = strip_upload_metadata(&content_type, bytes)
+        .map_err(|error| format!("uploaded file is not a readable {content_type} file: {error}"))?;
     let dimensions = image_dimensions(&content_type, &bytes);
 
     Ok(MediaUploadDraft {

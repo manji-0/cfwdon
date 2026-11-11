@@ -229,6 +229,13 @@ def seed(conn: sqlite3.Connection) -> None:
 def main() -> int:
     checks: list[tuple[str, str, tuple[object, ...], str | None]] = [
         (
+            "media metadata backfill page walks its index",
+            """SELECT object_key, attempts FROM media_metadata_backfill
+               ORDER BY attempts, object_key LIMIT ?""",
+            (200,),
+            None,
+        ),
+        (
             "public timeline seekable",
             """SELECT id FROM statuses
                WHERE visibility = 'public'

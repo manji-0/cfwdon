@@ -460,9 +460,15 @@ pub(crate) async fn update_credentials(
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
     };
+    // Mastodon answers a field it cannot take, an unreadable avatar or header
+    // included, with 422.
+    let update = match parse_update_credentials_request(req).await {
+        Ok(update) => update,
+        Err(message) => return Response::error(message, 422),
+    };
 
     let (account, settings, stats, featured_tags, config) =
-        update_profile_internal(req, &ctx, &config, &account).await?;
+        update_profile_internal(update, &ctx, &config, &account).await?;
     let follow_requests_count = count_pending_follow_requests(&db, account.id()).await?;
     Response::from_json(&build_credentials_document(
         &account,
@@ -484,9 +490,15 @@ pub(crate) async fn update_profile_response(
         Some(account) => account,
         None => return Response::error("Auth0 authentication required", 401),
     };
+    // Mastodon answers a field it cannot take, an unreadable avatar or header
+    // included, with 422.
+    let update = match parse_update_credentials_request(req).await {
+        Ok(update) => update,
+        Err(message) => return Response::error(message, 422),
+    };
 
     let (account, settings, _stats, featured_tags, config) =
-        update_profile_internal(req, &ctx, &config, &account).await?;
+        update_profile_internal(update, &ctx, &config, &account).await?;
     invalidate_account_public_cache(&ctx, account.id(), account.username()).await;
     Response::from_json(&build_profile_document(
         &account,
@@ -511,7 +523,7 @@ pub(crate) async fn delete_profile_header_response(
 }
 
 async fn update_profile_internal(
-    req: &mut Request,
+    mut update: UpdateCredentialsRequest,
     ctx: &RouteContext<()>,
     config: &AppConfig,
     account: &cfwdon_domain::LocalAccount,
@@ -522,9 +534,6 @@ async fn update_profile_internal(
     Vec<serde_json::Value>,
     AppConfig,
 )> {
-    let mut update = parse_update_credentials_request(req)
-        .await
-        .map_err(Error::RustError)?;
     let db = bind_request_d1(ctx, config)?;
     let config = config_with_resolved_custom_emojis(&db, config).await?;
     sanitize_update_credentials_request(&mut update, &config);
