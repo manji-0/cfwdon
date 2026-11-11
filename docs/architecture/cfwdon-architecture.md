@@ -117,7 +117,26 @@ A claim left by an apply that was cut off goes stale after 15 minutes. The next 
 
 ### Instance Domain Blocks
 
-Admins add instance domain blocks through `/api/cfwdon/admin/domain-blocks`. Each block acts as a Mastodon `suspend` block on the domain and every subdomain: a block on `example.com` also covers `a.example.com`. The Worker refuses inbox deliveries signed by or attributed to a suspended host with `403` before any key fetch. It skips outbound deliveries to a suspended host as terminal failures, and `url_guard` refuses remote fetches to one. `GET /api/v1/instance/domain_blocks` lists the blocks publicly, with each domain's SHA-256 digest and `severity: "suspend"`. Each isolate caches the blocked set for 60 seconds, so another isolate applies an admin edit within that time.
+Admins manage instance domain blocks through Mastodon's `/api/v1/admin/domain_blocks` (scopes `admin:read:domain_blocks` and `admin:write:domain_blocks`) or the admin UI's `/api/cfwdon/admin/domain-blocks`. A block covers the domain and every subdomain: a block on `example.com` also covers `a.example.com`. When several blocks cover one host, each restriction applies if any of them imposes it. Each block carries Mastodon's `DomainBlock` fields:
+
+- `severity: "suspend"` refuses all federation. The Worker refuses inbox deliveries signed by or attributed to a suspended host with `403` before any key fetch. It skips outbound deliveries to a suspended host as terminal failures, and `url_guard` refuses remote fetches to one. A suspension also implies every restriction below. Rows that existed before severities were added stay `suspend`.
+- `severity: "silence"` hides the server's remote posts from the public and hashtag timelines, and a follow from one of its accounts waits for approval as if the local account were locked. Federation still works. Unlike Mastodon, a viewer who follows a silenced account does not see its posts on those timelines either, and silenced accounts' notifications and search results are not filtered.
+- `severity: "noop"` limits nothing on its own and carries only the flags below.
+- `reject_media` stores no attachments for the server's remote posts and no avatar or header for its accounts. The Worker never downloads remote media, so this keeps the server's media URLs out of D1 and out of API responses. Rows stored before the block keep their media until the post or profile is refreshed.
+- `reject_reports` is stored and returned. The inbox does not process inbound `Flag` activities from any server, so there is nothing further to drop.
+- `obfuscate`, `public_comment`, and `private_comment` shape the listings. `GET /api/v1/instance/domain_blocks` lists `silence` and `suspend` blocks publicly with each domain's SHA-256 digest, its severity, and its public comment. An obfuscated block shows the domain with its middle characters replaced by `*`, as Mastodon's `public_domain` does.
+
+Each isolate caches the block set for 60 seconds, so another isolate applies an admin edit within that time.
+
+### IP Blocks
+
+Admins manage IP blocks through Mastodon's `/api/v1/admin/ip_blocks` (scopes `admin:read:ip_blocks` and `admin:write:ip_blocks`). The admin UI has no IP block page. A block names an IPv4 or IPv6 CIDR range, stored in canonical form (`10.1.2.3/8` is stored as `10.0.0.0/8`), an optional `expires_in` in seconds, a comment, and a severity:
+
+- `no_access` answers every request from the range with `403` before routing, except `GET /healthz`.
+- `sign_up_block` refuses `POST /api/v1/accounts` from the range with `403`.
+- `sign_up_requires_approval` also refuses the sign-up with `403`. cfwdon has no queue of accounts awaiting approval, so it cannot hold the account for review the way Mastodon does.
+
+When several blocks cover an address, the strictest one in force applies. The client address is the `CF-Connecting-IP` header, which Cloudflare sets on every request it forwards to the Worker. An IPv4-mapped IPv6 address matches IPv4 ranges. A request without the header, such as a local `wrangler dev` call, matches no block. `X-Forwarded-For` is never read. Each isolate caches the block list for 60 seconds, and a failed D1 read applies no block rather than refusing every client.
 
 ## Operational Plan
 <!-- constrained-by ../reference/configuration.md#cloudflare-bindings -->

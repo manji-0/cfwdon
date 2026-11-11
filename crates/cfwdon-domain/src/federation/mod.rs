@@ -16,7 +16,10 @@ pub use dns::{
     RemoteDnsResolutionIssue, RemoteFetchHostPolicyIssue, host_is_ip_literal, parse_dns_answer_ips,
     remote_fetch_host_allowed, remote_hostname_dns_resolution_allowed,
 };
-pub use domain_block::{host_within_any_blocked_domain, host_within_blocked_domain};
+pub use domain_block::{
+    DomainBlockPolicy, DomainBlockSeverity, DomainRestrictions, domain_restrictions_for_host,
+    host_within_any_blocked_domain, host_within_blocked_domain, obfuscated_domain,
+};
 pub use inbox::{
     InboxActivityRecordState, InboxClaim, inbox_activity_after_failure,
     inbox_activity_after_receive, inbox_activity_after_success,

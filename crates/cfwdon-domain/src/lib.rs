@@ -5,6 +5,7 @@ pub mod federation;
 pub mod follow;
 pub mod ids;
 pub mod instance;
+pub mod ip_block;
 pub mod media;
 pub mod media_metadata;
 pub mod quote;
@@ -42,19 +43,21 @@ pub use error::{
 };
 pub use federation::{
     ACTIVITYPUB_MAX_DATE_AGE_MS, ACTIVITYPUB_MAX_DATE_AHEAD_MS,
-    ACTIVITYPUB_REQUIRED_SIGNED_HEADERS, InboxActivityRecordState, InboxClaim,
-    RemoteActorAuthorityIssue, RemoteDnsResolutionIssue, RemoteFetchHostPolicyIssue,
-    RemoteUrlPolicyIssue, activitypub_date_within_skew, activitypub_host_header_matches_url_host,
+    ACTIVITYPUB_REQUIRED_SIGNED_HEADERS, DomainBlockPolicy, DomainBlockSeverity,
+    DomainRestrictions, InboxActivityRecordState, InboxClaim, RemoteActorAuthorityIssue,
+    RemoteDnsResolutionIssue, RemoteFetchHostPolicyIssue, RemoteUrlPolicyIssue,
+    activitypub_date_within_skew, activitypub_host_header_matches_url_host,
     activitypub_key_id_matches_actor, activitypub_signature_lists_required_headers,
-    cached_remote_actor_key_matches, host_is_ip_literal, host_within_any_blocked_domain,
-    host_within_blocked_domain, inbox_activity_after_failure, inbox_activity_after_receive,
-    inbox_activity_after_success, is_blocked_ip_address, parse_dns_answer_ips,
-    remote_actor_cached_handle_allowed, remote_actor_id_authority_allowed,
-    remote_actor_public_key_owner_allowed, remote_actor_related_uri_authority_allowed,
-    remote_actor_uri_matches_acct_domain, remote_fetch_host_allowed,
-    remote_hostname_dns_resolution_allowed, remote_http_authorities_match, remote_http_authority,
-    remote_http_url_scheme_allowed, remote_status_object_authority_allowed,
-    remote_url_policy_for_ip, remote_url_policy_from_parts, webfinger_link_is_activitypub_type,
+    cached_remote_actor_key_matches, domain_restrictions_for_host, host_is_ip_literal,
+    host_within_any_blocked_domain, host_within_blocked_domain, inbox_activity_after_failure,
+    inbox_activity_after_receive, inbox_activity_after_success, is_blocked_ip_address,
+    obfuscated_domain, parse_dns_answer_ips, remote_actor_cached_handle_allowed,
+    remote_actor_id_authority_allowed, remote_actor_public_key_owner_allowed,
+    remote_actor_related_uri_authority_allowed, remote_actor_uri_matches_acct_domain,
+    remote_fetch_host_allowed, remote_hostname_dns_resolution_allowed,
+    remote_http_authorities_match, remote_http_authority, remote_http_url_scheme_allowed,
+    remote_status_object_authority_allowed, remote_url_policy_for_ip, remote_url_policy_from_parts,
+    webfinger_link_is_activitypub_type,
 };
 pub use follow::{
     FollowRequestScenario, LocalFollowRequestState, LocalFollowState,
@@ -67,6 +70,10 @@ pub use follow::{
 };
 pub use ids::{AccountId, MediaId, StatusId};
 pub use instance::{InstanceCapabilities, InstanceSummary, SoftwareInfo};
+pub use ip_block::{
+    InvalidIpRange, IpBlockRule, IpBlockSeverity, IpRange, IpSignUpDecision, parse_client_ip,
+    strictest_ip_block,
+};
 pub use media::{MediaAttachment, StatusBoundMedia, StoredMediaAttachmentIntent, UploadedMedia};
 pub use media_metadata::{
     MalformedMedia, MediaContainer, MetadataStrip, StoredMediaRestrip, StrippedMedia,

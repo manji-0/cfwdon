@@ -164,21 +164,39 @@ export function deleteRelay(relayId: string): Promise<void> {
   });
 }
 
+export type DomainBlockSeverity = "suspend" | "silence" | "noop";
+
 export type AdminDomainBlock = {
-  id: number;
+  id: string;
   domain: string;
   created_at: string;
+  severity: DomainBlockSeverity;
+  reject_media: boolean;
+  reject_reports: boolean;
+  obfuscate: boolean;
+  private_comment: string | null;
+  public_comment: string | null;
+};
+
+export type DomainBlockForm = {
+  domain: string;
+  severity: DomainBlockSeverity;
+  reject_media: boolean;
+  reject_reports: boolean;
+  obfuscate: boolean;
+  public_comment: string;
 };
 
 export function fetchDomainBlocks(): Promise<AdminDomainBlock[]> {
   return apiFetch<AdminDomainBlock[]>("/api/cfwdon/admin/domain-blocks");
 }
 
-export function createDomainBlock(domain: string): Promise<AdminDomainBlock> {
+/** Creates the block, or replaces the policy of an existing block for the domain. */
+export function createDomainBlock(form: DomainBlockForm): Promise<AdminDomainBlock> {
   return apiFetch<AdminDomainBlock>("/api/cfwdon/admin/domain-blocks", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ domain }),
+    body: JSON.stringify(form),
   });
 }
 

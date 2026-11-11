@@ -9,6 +9,7 @@ use super::{
 };
 use crate::content_helpers::{extract_hashtags_from_html, extract_hashtags_from_text};
 use crate::db_session::{open_bound_request_session, with_d1_bookmark};
+use crate::federation::instance_domain_blocks;
 use crate::filters::load_account_filter_matcher;
 use crate::request_utils::query_array_param;
 use crate::runtime_config::load_config;
@@ -126,7 +127,15 @@ pub(crate) async fn tag_timeline_response(req: Request, ctx: RouteContext<()>) -
             &remote_statuses,
         )
         .await?;
+        // Mastodon hides silenced servers' posts from public timelines.
+        let domain_blocks = instance_domain_blocks().await?;
         for (status, actor) in remote_statuses {
+            if domain_blocks
+                .restrictions_for_actor(&actor.domain, &actor.actor_uri)
+                .silenced
+            {
+                continue;
+            }
             let status_tags = extract_hashtags_from_html(&status.content_html);
             if !matches_tag_timeline_filters(&status_tags, &tag, &query) {
                 continue;
