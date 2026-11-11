@@ -3,7 +3,7 @@ use crate::custom_emojis::sanitize_emoji_shortcodes;
 use crate::request_utils::parse_optional_bool;
 use crate::runtime_config::MAX_IMAGE_UPLOAD_BYTES;
 use crate::statuses::normalize_quote_approval_policy;
-use crate::store::media::{MediaKind, classify_media_kind};
+use crate::store::media::{MediaKind, upload_media_kind};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use cfwdon_domain::strip_upload_metadata;
 use serde::Deserialize;
@@ -421,7 +421,7 @@ async fn parse_profile_media_upload(
     if content_type.is_empty() {
         return Err(format!("{object_kind} is missing a content type"));
     }
-    let kind = classify_media_kind(&content_type)
+    let kind = upload_media_kind(&content_type)
         .ok_or_else(|| format!("unsupported {object_kind} content type: {content_type}"))?;
     if kind != MediaKind::Image {
         return Err(format!("{object_kind} must be an image"));
@@ -483,7 +483,7 @@ fn parse_profile_media_data_url(
     if content_type.is_empty() {
         return Err(format!("{object_kind} is missing a content type"));
     }
-    let kind = classify_media_kind(&content_type)
+    let kind = upload_media_kind(&content_type)
         .ok_or_else(|| format!("unsupported {object_kind} content type: {content_type}"))?;
     if kind != MediaKind::Image {
         return Err(format!("{object_kind} must be an image"));
@@ -608,6 +608,14 @@ mod tests {
         assert!(!upload.bytes.windows(10).any(|w| w == b"secret-gps"));
         assert_eq!(upload.content_type, "image/png");
         assert_eq!(upload.object_kind, "avatar");
+    }
+
+    #[test]
+    fn profile_media_upload_refuses_svg() {
+        let svg = b"<svg xmlns=\"http://www.w3.org/2000/svg\"><script>alert(1)</script></svg>";
+        let data_url = format!("data:image/svg+xml;base64,{}", STANDARD.encode(svg));
+        let error = parse_profile_media_data_url(&data_url, "avatar").expect_err("not stored");
+        assert_eq!(error, "unsupported avatar content type: image/svg+xml");
     }
 
     #[test]

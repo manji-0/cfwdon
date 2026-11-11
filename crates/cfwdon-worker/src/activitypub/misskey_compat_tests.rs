@@ -159,7 +159,7 @@ fn misskey_like_with_reaction_is_still_primary_like() {
 }
 
 #[test]
-fn misskey_emoji_react_and_vote_and_flag_are_distinct_unsupported_types() {
+fn misskey_emoji_react_vote_and_flag_are_distinct_types() {
     assert_eq!(
         activitypub_primary_type(&misskey_emoji_react()),
         Some("EmojiReact")

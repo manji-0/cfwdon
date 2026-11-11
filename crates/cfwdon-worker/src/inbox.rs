@@ -22,6 +22,7 @@ mod follow_handlers;
 mod interactions;
 mod poll_interactions;
 mod relay_handlers;
+mod report_handlers;
 mod status_handlers;
 mod status_interactions;
 mod target_resolution;
@@ -31,6 +32,7 @@ pub(crate) use follow_handlers::*;
 pub(crate) use interactions::*;
 pub(crate) use poll_interactions::*;
 pub(crate) use relay_handlers::*;
+pub(crate) use report_handlers::*;
 pub(crate) use status_handlers::*;
 pub(crate) use status_interactions::*;
 pub(crate) use target_resolution::*;
@@ -188,6 +190,7 @@ async fn dispatch_inbox_activity(
             }
         }
         "Delete" => handle_inbox_delete(db, config, activity, remote_actor, env).await,
+        "Flag" => handle_inbox_flag(db, config, activity, remote_actor).await,
         _ => Ok(()),
     }
 }
@@ -462,7 +465,7 @@ pub(crate) async fn handle_inbox_request_for_accounts(
 fn inbox_activity_ignores_recipient(activity_type: &str) -> bool {
     matches!(
         activity_type,
-        "Accept" | "Reject" | "Delete" | "Add" | "Remove"
+        "Accept" | "Reject" | "Delete" | "Add" | "Remove" | "Flag"
     )
 }
 
@@ -618,7 +621,7 @@ mod tests {
 
     #[test]
     fn recipient_independent_activities_are_dispatched_once() {
-        for activity_type in ["Accept", "Reject", "Delete", "Add", "Remove"] {
+        for activity_type in ["Accept", "Reject", "Delete", "Add", "Remove", "Flag"] {
             assert!(inbox_activity_ignores_recipient(activity_type));
         }
         for activity_type in ["Create", "Update", "Follow", "Undo", "Like", "Announce"] {
@@ -673,8 +676,8 @@ mod tests {
     #[test]
     fn misskey_specific_activity_types_are_recognized_but_not_dispatched() {
         // dispatch_inbox_activity matches known Mastodon-shaped types only; Misskey
-        // EmojiReact / Vote / Flag fall through to the silent Ok(()) branch.
-        for activity_type in ["EmojiReact", "Vote", "Flag"] {
+        // EmojiReact / Vote fall through to the silent Ok(()) branch.
+        for activity_type in ["EmojiReact", "Vote"] {
             assert_eq!(
                 inbox_activity_type(&serde_json::json!({ "type": activity_type })),
                 activity_type
@@ -692,6 +695,7 @@ mod tests {
                     | "Remove"
                     | "Update"
                     | "Delete"
+                    | "Flag"
             ));
         }
     }

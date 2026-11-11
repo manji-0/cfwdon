@@ -447,6 +447,14 @@ def main() -> int:
             None,
         ),
         (
+            "inbound Flag report status links seek the report",
+            """SELECT r.id, j.value
+               FROM reports r, json_each(?4) j
+               WHERE r.id = ?1 OR (r.uri = ?2 AND r.target_account_id = ?3)""",
+            ("report-1", "https://remote.example/flags/1", "acct-1", '["status-1"]'),
+            "r",
+        ),
+        (
             "followers by actor_uri",
             """SELECT 1 FROM followers WHERE actor_uri = ? LIMIT 1""",
             ("https://remote.example/users/bob",),

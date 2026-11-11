@@ -96,7 +96,10 @@ pub use remote::{
     quote_target_uri_from_fields, remote_status_default_quote_state,
     visibility_from_activitypub_audiences, visibility_from_audience_lists,
 };
-pub use report::StoredReportIntent;
+pub use report::{
+    FlaggedObject, INBOUND_FLAG_MAX_OBJECTS, InboundFlagReport, REPORT_COMMENT_MAX_CHARS,
+    StoredReportIntent, inbound_flag_comment, inbound_flag_report_uri, inbound_flag_reports,
+};
 pub use status::{
     ComposingStatus, LocalReblogPersistenceFacts, LocalStatus, LocalStatusPersistenceFacts,
     LocalStatusRecord, PollDraft, PublishIntent, QuoteTargetResolution, StatusDraft,

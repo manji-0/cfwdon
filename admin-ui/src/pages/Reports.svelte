@@ -131,6 +131,9 @@
                 {:else}
                   <span class="muted">コメントなし</span>
                 {/if}
+                {#if report.origin_domain}
+                  <div class="muted">報告元サーバー: <span class="mono">{report.origin_domain}</span></div>
+                {/if}
                 {#if report.status_ids.length > 0}
                   <div class="statuses">
                     <span class="muted">対象の投稿:</span>

@@ -2,7 +2,7 @@ use crate::auth::find_authenticated_local_account;
 use crate::response::{MastodonMediaAttachmentResponse, media_object_url};
 use crate::store::media::{
     delete_media_attachment_row, delete_orphan_media, delete_queued_media,
-    find_media_attachment_by_id, log_r2_operation, store_media_attachment,
+    find_media_attachment_by_id, log_r2_operation, store_media_attachment, upload_media_kind,
 };
 use worker::{Error, Request, Response, Result, RouteContext};
 mod attachment_store;
@@ -107,15 +107,37 @@ pub(crate) async fn media_content_response(ctx: RouteContext<()>) -> Result<Resp
     };
 
     let mut response = Response::from_body(body.response_body()?)?;
-    response
-        .headers_mut()
-        .set("Content-Type", &media.content_type)?;
+    for (name, value) in served_media_headers(&media.content_type) {
+        response.headers_mut().set(name, value)?;
+    }
     response.headers_mut().set("ETag", &object.http_etag())?;
     response
         .headers_mut()
         .set("Cache-Control", "public, max-age=31536000, immutable")?;
 
     Ok(response)
+}
+
+/// The headers that keep stored media from running as a page on the instance
+/// origin, as Mastodon's media domain does: no type sniffing, and a CSP that
+/// allows no script, style, or form. A stored type that may no longer be
+/// uploaded, such as an SVG stored by an earlier release, is served as an
+/// `application/octet-stream` download instead of inline.
+pub(crate) fn served_media_headers(stored_content_type: &str) -> [(&'static str, &str); 4] {
+    let (content_type, disposition) = if upload_media_kind(stored_content_type).is_some() {
+        (stored_content_type, "inline")
+    } else {
+        ("application/octet-stream", "attachment")
+    };
+    [
+        ("Content-Type", content_type),
+        ("Content-Disposition", disposition),
+        ("X-Content-Type-Options", "nosniff"),
+        (
+            "Content-Security-Policy",
+            "default-src 'none'; form-action 'none'",
+        ),
+    ]
 }
 
 pub(crate) async fn media_metadata_response(

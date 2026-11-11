@@ -1,9 +1,10 @@
 use crate::identity::{
-    configured_instance_languages, extended_description_url, instance_base_url,
-    instance_supported_mime_types, privacy_policy_url, terms_of_service_url,
+    configured_instance_languages, extended_description_url, instance_base_url, privacy_policy_url,
+    terms_of_service_url,
 };
 use crate::policy_documents::normalize_policy_body;
 use crate::runtime_config::{MAX_AV_UPLOAD_BYTES, MAX_IMAGE_UPLOAD_BYTES};
+use crate::store::media::upload_media_types;
 use crate::time_html::render_status_html;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::InstanceSummary;
@@ -72,7 +73,7 @@ fn instance_accounts_configuration(include_pinned_statuses: bool) -> serde_json:
 
 fn instance_media_attachments_configuration() -> serde_json::Value {
     serde_json::json!({
-        "supported_mime_types": instance_supported_mime_types(),
+        "supported_mime_types": upload_media_types().collect::<Vec<_>>(),
         "description_limit": 1500,
         "image_size_limit": MAX_IMAGE_UPLOAD_BYTES,
         "image_matrix_limit": IMAGE_MATRIX_LIMIT,

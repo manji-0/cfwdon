@@ -13,6 +13,7 @@ pub(crate) use store::*;
 
 use self::store::{insert_report, list_reports};
 use crate::auth::find_account_by_email;
+use cfwdon_core::AppConfig;
 use serde::Deserialize;
 
 #[derive(Debug, Deserialize)]
@@ -29,6 +30,8 @@ pub(crate) struct ReportRow {
     pub(crate) action_taken_at: Option<String>,
     #[serde(rename = "action_taken_by_account_id")]
     pub(crate) _action_taken_by_account_id: Option<String>,
+    /// The reporting server's domain; `None` for a report filed here.
+    pub(crate) origin_domain: Option<String>,
     pub(crate) created_at: String,
 }
 
@@ -61,25 +64,37 @@ pub(crate) async fn create_report(req: &mut Request, ctx: RouteContext<()>) -> R
         return Response::error(message, status);
     }
     let report = insert_report(&db, reporter.id(), &request, &target, &status_ids).await?;
+    notify_admins_of_report(&db, &config, &report.id, reporter.id(), &request.account_id).await?;
 
+    Response::from_json(&build_report_response(&db, &config, &report).await?)
+}
+
+/// Push `admin.report` to every configured admin. A failed push does not undo
+/// the filed report.
+pub(crate) async fn notify_admins_of_report(
+    db: &D1Database,
+    config: &AppConfig,
+    report_id: &str,
+    reporter_account_id: &str,
+    target_account_id: &str,
+) -> Result<()> {
     for admin_email in &config.admin_emails {
-        if let Some(admin) = find_account_by_email(&db, admin_email).await? {
+        if let Some(admin) = find_account_by_email(db, admin_email).await? {
             let _ = send_push_notification(
-                &db,
-                &config,
+                db,
+                config,
                 admin.id(),
                 "admin.report",
                 serde_json::json!({
-                    "report_id": report.id,
-                    "reporter_account_id": reporter.id(),
-                    "target_account_id": request.account_id,
+                    "report_id": report_id,
+                    "reporter_account_id": reporter_account_id,
+                    "target_account_id": target_account_id,
                 }),
             )
             .await;
         }
     }
-
-    Response::from_json(&build_report_response(&db, &config, &report).await?)
+    Ok(())
 }
 
 pub(crate) async fn list_admin_report_notifications(

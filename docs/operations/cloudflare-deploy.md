@@ -173,6 +173,20 @@ Uploads are stripped of EXIF, GPS, XMP, and video location tags before they reac
 4. Decide what to do with each `too_large` object (over 40 MiB), each `unstrippable` object (a TIFF, which keeps its EXIF), each `unreadable` object, and each `abandoned` object. All of them still carry their metadata. Delete them, or replace them by hand.
 5. Purge the media hostname from the Cloudflare cache. The `/media/:id` fallback route serves objects with `Cache-Control: public, max-age=31536000, immutable`, and the media domain caches them under its Cache Rules, so cached copies keep the old bytes until they are purged. Browsers and remote servers that already fetched a file keep their copies.
 
+## Serving Media Safely
+<!-- constrained-by ../architecture/cfwdon-architecture.md#media-content-types -->
+
+Uploads of SVG, markup, and JPEG XL are refused, and the `/media/:id` route sends `X-Content-Type-Options: nosniff` and a `default-src 'none'` Content Security Policy. Two places still need operator action:
+
+1. Purge `/media/*` on the instance hostname from the Cloudflare cache after deploying this change. Cached responses were stored with `Cache-Control: public, max-age=31536000, immutable` and keep their old headers until they are purged.
+2. Add a Response Header Transform Rule on the `MEDIA_PUBLIC_BASE_URL` hostname. R2 serves objects there with the type stored at upload, and an earlier release could store `image/svg+xml`. Set these response headers:
+   - `X-Content-Type-Options: nosniff`
+   - `Content-Security-Policy: default-src 'none'; form-action 'none'`
+
+   Then purge the media hostname from the Cloudflare cache.
+
+Keep the media hostname separate from the instance hostname, as Mastodon does, so a file that does render never runs on the instance origin.
+
 ## Stream Hub hibernation exceptions
 <!-- derived-from #provisioning-steps -->
 

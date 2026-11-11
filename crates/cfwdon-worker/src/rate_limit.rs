@@ -395,6 +395,7 @@ pub(crate) async fn enforce_rate_limits(
         return Ok(RateLimitGate::Open);
     };
     let ip = client_ip_key(req);
+    let url = req.url().ok();
     let caller = if is_api_path(path) {
         rate_limit_caller(req, env, config).await
     } else {
@@ -405,6 +406,8 @@ pub(crate) async fn enforce_rate_limits(
         &RateLimitRequest {
             method,
             path,
+            query: url.as_ref().and_then(|url| url.query()).unwrap_or(""),
+            local_domain: &config.instance_domain,
             ip: ip.as_deref(),
             caller: &caller,
         },

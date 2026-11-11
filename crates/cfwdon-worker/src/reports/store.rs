@@ -1,10 +1,10 @@
 use super::{CreateReportRequest, ReportRow};
-use crate::db_utils::d1_results;
+use crate::db_utils::{d1_results, json_string_array};
 use crate::id_utils::generate_entity_id;
 use crate::identity::remote_account_rest_id;
 use crate::remote::AccountReference;
 use crate::tracked_d1::D1Database;
-use cfwdon_domain::StoredReportIntent;
+use cfwdon_domain::{InboundFlagReport, StoredReportIntent};
 use worker::d1::D1Type;
 use worker::{Error, Result};
 fn stored_report_intent(
@@ -111,7 +111,78 @@ pub(crate) async fn insert_report(
         .ok_or_else(|| Error::RustError("failed to load created report".to_owned()))
 }
 
-const REPORT_SELECT_COLUMNS: &str = "id, account_id, target_account_id, target_remote_actor_uri, comment, category, forward, action_taken, action_taken_at, action_taken_by_account_id, created_at";
+/// Files a remote report unless the same `Flag` already filed one on this
+/// target. `scripts/check_migrations.py` runs this text against the schema.
+const INSERT_INBOUND_FLAG_REPORT_SQL: &str = "INSERT INTO reports (
+            id, account_id, target_account_id, comment, category, forward,
+            uri, origin_domain, created_at
+        ) VALUES (?1, ?2, ?3, ?4, 'other', 0, ?5, ?6, CURRENT_TIMESTAMP)
+        ON CONFLICT (uri, target_account_id) WHERE uri IS NOT NULL DO NOTHING";
+
+/// Links the flagged statuses to the report just filed (`?1`) or, on
+/// redelivery, to the one the same `Flag` filed before, so a retry after a
+/// partial apply still converges.
+const LINK_INBOUND_FLAG_REPORT_STATUSES_SQL: &str =
+    "INSERT OR IGNORE INTO report_statuses (report_id, status_id)
+        SELECT r.id, j.value
+        FROM reports r, json_each(?4) j
+        WHERE r.id = ?1 OR (r.uri = ?2 AND r.target_account_id = ?3)";
+
+/// A report another server filed through an ActivityPub `Flag`.
+pub(crate) struct InboundFlagReportInsert<'a> {
+    /// The REST id of the remote actor that sent the `Flag`.
+    pub(crate) reporter_account_id: &'a str,
+    pub(crate) origin_domain: &'a str,
+    /// The trusted `Flag` id, when it has one.
+    pub(crate) uri: Option<&'a str>,
+    pub(crate) comment: &'a str,
+    pub(crate) report: &'a InboundFlagReport,
+}
+
+/// Files one inbound `Flag` report and its statuses in one transaction.
+/// Returns the new report id, or `None` when the `Flag` filed it before.
+pub(crate) async fn insert_inbound_flag_report(
+    db: &D1Database,
+    insert: &InboundFlagReportInsert<'_>,
+) -> Result<Option<String>> {
+    let report_id = generate_entity_id(16)?;
+    let uri = || insert.uri.map_or(D1Type::Null, D1Type::Text);
+    let target = || D1Type::Text(insert.report.target_account_id.as_str());
+    let status_ids = json_string_array(&insert.report.status_ids);
+    let report_bindings = [
+        D1Type::Text(report_id.as_str()),
+        D1Type::Text(insert.reporter_account_id),
+        target(),
+        D1Type::Text(insert.comment),
+        uri(),
+        D1Type::Text(insert.origin_domain),
+    ];
+    let link_bindings = [
+        D1Type::Text(report_id.as_str()),
+        uri(),
+        target(),
+        D1Type::Text(status_ids.as_str()),
+    ];
+    let results = db
+        .batch(vec![
+            db.prepare(INSERT_INBOUND_FLAG_REPORT_SQL)
+                .bind_refs(report_bindings.iter())?,
+            db.prepare(LINK_INBOUND_FLAG_REPORT_STATUSES_SQL)
+                .bind_refs(link_bindings.iter())?,
+        ])
+        .await?;
+    let filed = results
+        .first()
+        .map(|result| result.meta())
+        .transpose()?
+        .flatten()
+        .and_then(|meta| meta.changes)
+        .unwrap_or(0)
+        > 0;
+    Ok(filed.then_some(report_id))
+}
+
+const REPORT_SELECT_COLUMNS: &str = "id, account_id, target_account_id, target_remote_actor_uri, comment, category, forward, action_taken, action_taken_at, action_taken_by_account_id, origin_domain, created_at";
 
 pub(crate) async fn find_report_by_id(
     db: &D1Database,

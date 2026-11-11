@@ -129,14 +129,25 @@ Admins manage instance domain blocks through Mastodon's `/api/v1/admin/domain_bl
 - `severity: "silence"` hides the server's remote posts from the public and hashtag timelines, and a follow from one of its accounts waits for approval as if the local account were locked. Federation still works. Unlike Mastodon, a viewer who follows a silenced account does not see its posts on those timelines either, and silenced accounts' notifications and search results are not filtered.
 - `severity: "noop"` limits nothing on its own and carries only the flags below.
 - `reject_media` stores no attachments for the server's remote posts and no avatar or header for its accounts. The Worker never downloads remote media, so this keeps the server's media URLs out of D1 and out of API responses. Rows stored before the block keep their media until the post or profile is refreshed.
-- `reject_reports` is stored and returned. The inbox does not process inbound `Flag` activities from any server, so there is nothing further to drop.
+- `reject_reports` drops every inbound `Flag` from the server, so it files no report (see [Inbound Reports](#inbound-reports)).
 - `obfuscate`, `public_comment`, and `private_comment` shape the listings. `GET /api/v1/instance/domain_blocks` lists `silence` and `suspend` blocks publicly with each domain's SHA-256 digest, its severity, and its public comment. An obfuscated block shows the domain with its middle characters replaced by `*`, as Mastodon's `public_domain` does.
 
 Each isolate caches the block set for 60 seconds, so another isolate applies an admin edit within that time.
 
+### Inbound Reports
+<!-- derived-from #instance-domain-blocks -->
+
+Another server files a report here by delivering an ActivityPub `Flag` to a personal inbox or the shared inbox. cfwdon handles it the way Mastodon's `ActivityPub::Activity::Flag` does:
+
+- A `Flag` from a server whose domain block has `reject_reports` (or `severity: "suspend"`) files nothing. The block is matched on the sender's acct domain and on its actor URI host.
+- The `Flag` files one report for each local account its `object` names. A report carries only the named local statuses that the account wrote. A status alone does not make its author a target, and remote or unknown objects are ignored. At most 100 objects are looked up.
+- The reporter is the actor that signed the `Flag`. For an anonymous report this is the remote server's instance actor. The report's category is `other`, its comment is the `Flag` `content` cut to 1,000 characters, and `origin_domain` records the sender's domain. The admin reports page shows that domain as the report's source.
+- A report is keyed on the `Flag` id and the target account, so a redelivered `Flag` files nothing new. The id counts only when its host matches the sender's actor URI. A `Flag` with any other id is not keyed and relies on the inbox claim alone.
+- Each new report sends the `admin.report` push to the configured admins. It also lists in their `admin.report` notifications with the remote reporter as the notification's account.
+
 ### IP Blocks
 
-Admins manage IP blocks through Mastodon's `/api/v1/admin/ip_blocks` (scopes `admin:read:ip_blocks` and `admin:write:ip_blocks`). The admin UI has no IP block page. A block names an IPv4 or IPv6 CIDR range, stored in canonical form (`10.1.2.3/8` is stored as `10.0.0.0/8`), an optional `expires_in` in seconds, a comment, and a severity:
+Admins manage IP blocks through Mastodon's `/api/v1/admin/ip_blocks` (scopes `admin:read:ip_blocks` and `admin:write:ip_blocks`). The admin UI has an IP blocks page (`/admin/ip-blocks`) backed by `/api/cfwdon/admin/ip-blocks` (list, create, `PATCH`/delete by id), which share the Mastodon handlers and so the same administrator check. A block names an IPv4 or IPv6 CIDR range, stored in canonical form (`10.1.2.3/8` is stored as `10.0.0.0/8`), an optional `expires_in` in seconds, a comment, and a severity:
 
 - `no_access` answers every request from the range with `403` before routing, except `GET /healthz`.
 - `sign_up_block` refuses `POST /api/v1/accounts` from the range with `403`.
@@ -179,6 +190,7 @@ When several blocks cover an address, the strictest one in force applies. The cl
 - Maintain DNS-based SSRF checks for remote resolution paths.
 - Treat private/direct status visibility as a cross-cutting data access concern.
 - Strip location and device metadata from user media before it is stored, as described in [Media Metadata Stripping](#media-metadata-stripping).
+- Accept only image, video, and audio types that cannot run script, and serve stored media so it never renders as a page, as described in [Media Content Types](#media-content-types).
 
 ### Media Metadata Stripping
 
@@ -200,6 +212,20 @@ Timed text goes even when it holds captions a person wrote. DJI drones write the
 Every path that stores user media calls `strip_upload_metadata` before the R2 put: media attachments, avatars and headers, and custom emoji. The bytes decide the container, not the declared type. The upload is refused with 422 when the file is damaged, when a declared image or video type does not match the bytes, or when the file is TIFF, which is EXIF throughout. GIF, audio, and other formats without a stripper are stored as uploaded.
 
 Objects stored before stripping existed are queued once in `media_metadata_backfill` by migration `127`. The hourly cron runs the backfill after all other hourly maintenance. Each run reads up to 200 queued objects, or 64 MiB, rewrites each with a conditional put on the object's etag, then deletes its row. An object is read and written back in chunks, so it costs at most about twice its size in memory, and every object up to the 40 MiB upload limit is stripped. A run counts an attempt before it reads an object. An object that ends the invocation sorts behind the rest, and after 3 attempts it is dequeued and logged as `abandoned`. Objects over 40 MiB, TIFF files, and files that cannot be parsed stay as they are and are logged as `media_metadata_backfill` events with the outcome `too_large`, `unstrippable`, or `unreadable`. Copies already cached by the media domain or by browsers keep their old bytes until they expire or are purged; see [Stripping Metadata From Stored Media](../operations/cloudflare-deploy.md#stripping-metadata-from-stored-media).
+
+### Media Content Types
+
+User-supplied bytes reach R2 through media attachments, avatars and headers, and custom emoji. Remote media is neither cached nor proxied: the API hands clients the remote URL.
+
+Uploads are checked against one allowlist, `UPLOAD_MEDIA_TYPES` in `store::media`. It holds Mastodon's `MediaAttachment` image, video, and audio types, without `video/x-ms-asf`, plus `image/jpg`. `GET /api/v2/instance` advertises the same list as `supported_mime_types`. For a media attachment, a declared type outside the list is replaced by the type the magic bytes show. An avatar or header keeps its declared type. When no accepted type remains, the upload is refused with 422. Custom emoji keep their narrower PNG, GIF, and WebP list.
+
+- SVG is refused. An SVG is an XML document that runs script when a browser opens it, and the Worker has no rasterizer to convert it.
+- HTML, XML, and any other markup type are refused for the same reason.
+- JPEG XL is refused. `cfwdon_domain::media_metadata` has no JPEG XL stripper, so its EXIF and XMP boxes would be stored as uploaded. Mastodon does not accept it either.
+
+The `/media/:id` route serves stored bytes with `X-Content-Type-Options: nosniff` and `Content-Security-Policy: default-src 'none'; form-action 'none'`, as Mastodon's media domain does. An object whose stored type is on the allowlist keeps that type and `Content-Disposition: inline`. Any other stored type, such as an SVG uploaded before the allowlist existed, is served as `application/octet-stream` with `Content-Disposition: attachment`, so it downloads and never renders. Stored SVG objects are not deleted or converted. Clients show them as broken media.
+
+When `MEDIA_PUBLIC_BASE_URL` is set, `/media/:id` redirects there, and R2 serves objects with their stored metadata. The Worker cannot set headers on that domain; see [Serving Media Safely](../operations/cloudflare-deploy.md#serving-media-safely).
 
 ## Rollout History
 
