@@ -1,5 +1,6 @@
 mod access_provision;
 mod activitypub_visibility;
+mod authorized_fetch;
 mod catalog;
 mod concurrent_delivery;
 mod federation_dns;
@@ -28,6 +29,7 @@ pub(crate) fn verify_refinements() {
     federation_dns::check_federation_dns_refinement();
     inbox_replay::check_inbox_replay_refinement();
     federation_request_policy::check_federation_request_policy_refinement();
+    authorized_fetch::check_authorized_fetch_refinement();
     outbox_delivery_pool::check_outbox_delivery_pool_refinement();
     concurrent_delivery::check_concurrent_delivery_refinement();
     outbox_pipeline::check_outbox_pipeline_refinement();
@@ -49,6 +51,7 @@ mod tests {
         assert!(names.contains(&"quote_approval"));
         assert!(names.contains(&"status_draft_transition_events"));
         assert!(names.contains(&"federation_dns_policy"));
-        assert_eq!(names.len(), 16);
+        assert!(names.contains(&"authorized_fetch"));
+        assert_eq!(names.len(), 17);
     }
 }
