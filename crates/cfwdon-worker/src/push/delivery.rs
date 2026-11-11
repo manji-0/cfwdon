@@ -3,7 +3,7 @@ use crate::db_utils::d1_results;
 use crate::deferred::defer;
 use crate::notifications::{
     build_local_status_response_for_recipient_soft, notification_timestamp_sort_token,
-    publish_local_actor_notification_soft,
+    publish_local_actor_notification_soft, remote_sender_notification_listed,
 };
 use crate::push::{load_push_subscription, push_subscription_alert_enabled};
 use crate::statuses::{
@@ -371,11 +371,15 @@ pub(crate) async fn send_status_quote_notification(
     .await
 }
 
+/// Remote quotes are the only filterable notification a remote account
+/// pushes, so this is where a silenced quoter is held back, by the rule the
+/// REST listing applies.
 pub(crate) async fn send_remote_status_quote_notification(
     db: &D1Database,
     config: &AppConfig,
     quote_status_id: &str,
     quote_author_id: &str,
+    quote_author_domain: &str,
     quote_state: &str,
     quote_of_uri: Option<&str>,
 ) -> Result<()> {
@@ -388,7 +392,16 @@ pub(crate) async fn send_remote_status_quote_notification(
     let Some(target) = find_local_status_by_object_uri(db, config, quote_of_uri).await? else {
         return Ok(());
     };
-    if target.account_id == quote_author_id {
+    if target.account_id == quote_author_id
+        || !remote_sender_notification_listed(
+            db,
+            &target.account_id,
+            "quote",
+            quote_author_domain,
+            quote_author_id,
+        )
+        .await?
+    {
         return Ok(());
     }
     send_push_notifications_to_accounts(

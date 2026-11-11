@@ -60,6 +60,7 @@ pub(crate) async fn dispatch_remote_status_notifications(
                 config,
                 &status.id,
                 &status.actor_uri,
+                &actor.domain,
                 status.quote_state.as_str(),
                 status.quote_of_uri.as_deref(),
             )

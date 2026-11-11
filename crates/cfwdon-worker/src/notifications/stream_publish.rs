@@ -1,9 +1,6 @@
 use super::types::{MastodonNotificationResponse, NotificationEntry};
-use super::{
-    limited_sender_notification_listed, load_notification_policy_row,
-    notification_timestamp_sort_token, notification_type_filterable,
-};
 use super::{notification_api_numeric_id_string, notification_v1_value};
+use super::{notification_timestamp_sort_token, remote_sender_notification_listed};
 use crate::activitypub::is_public_activitypub_visibility;
 use crate::auth::{find_account_by_id, find_account_by_username};
 use crate::content_helpers::extract_mentions_from_text;
@@ -18,7 +15,6 @@ use crate::statuses::{
     build_local_status_response, build_remote_status_response, find_local_status_by_object_uri,
     load_in_reply_to_account_id, statuses_from_records,
 };
-use crate::store::relationship::silenced_authors_hidden_from;
 use crate::store::remote::find_remote_actor_by_actor_uri;
 use crate::stream_hub::publish_notification_stream_hub_event_soft;
 use crate::time_html::{now_iso_string, timestamp_to_mastodon_iso8601};
@@ -485,24 +481,15 @@ async fn streamed_notification_listed(
     let Some((_, domain)) = notification.account.acct.split_once('@') else {
         return Ok(true);
     };
-    if !notification_type_filterable(&notification.notification_type) {
-        return Ok(true);
-    }
     let db = D1Database::new(env.d1(&config.database_binding)?);
-    let hidden = silenced_authors_hidden_from(
+    remote_sender_notification_listed(
         &db,
-        Some(recipient_account_id),
-        [(domain, notification.account.uri.as_str())],
-    )
-    .await?;
-    if hidden.is_empty() {
-        return Ok(true);
-    }
-    let policy = load_notification_policy_row(&db, recipient_account_id).await?;
-    Ok(limited_sender_notification_listed(
+        recipient_account_id,
         &notification.notification_type,
-        &policy.for_limited_accounts,
-    ))
+        domain,
+        &notification.account.uri,
+    )
+    .await
 }
 
 async fn publish_notification_response_now(

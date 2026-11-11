@@ -45,6 +45,8 @@ pub(crate) struct CachedDomainBlock {
 pub(crate) struct InstanceDomainBlocks {
     blocks: Vec<CachedDomainBlock>,
     suspended: Rc<[String]>,
+    /// Some block has `severity: silence`.
+    has_silence_block: bool,
 }
 
 impl InstanceDomainBlocks {
@@ -54,19 +56,36 @@ impl InstanceDomainBlocks {
             .filter(|block| block.policy.severity == DomainBlockSeverity::Suspend)
             .map(|block| block.domain.clone())
             .collect();
-        Self { blocks, suspended }
+        let has_silence_block = blocks
+            .iter()
+            .any(|block| block.policy.severity == DomainBlockSeverity::Silence);
+        Self {
+            blocks,
+            suspended,
+            has_silence_block,
+        }
     }
 
     pub(crate) fn blocks(&self) -> &[CachedDomainBlock] {
         &self.blocks
     }
 
-    /// Whether any block silences a domain, so callers can skip loading what
-    /// a silence check needs on the common instance that silences nothing.
-    pub(crate) fn silences_any_domain(&self) -> bool {
-        self.blocks
-            .iter()
-            .any(|block| block.policy.restrictions().silenced)
+    /// Whether a silence check over these remote authors could hide one, so
+    /// callers skip loading their acct domains (and their follows) otherwise.
+    /// A `silence` block can cover an author through its acct domain, which
+    /// only the stored actor row knows. A `suspend` block also silences, but
+    /// a suspended host's deliveries are refused, so it is matched here by
+    /// actor URI host alone: an instance with only suspensions, the common
+    /// case, pays no query.
+    pub(crate) fn may_silence_any<'a>(
+        &self,
+        actor_uris: impl IntoIterator<Item = &'a str>,
+    ) -> bool {
+        self.has_silence_block
+            || (!self.suspended.is_empty()
+                && actor_uris
+                    .into_iter()
+                    .any(|actor_uri| self.restrictions_for_url(actor_uri).suspended))
     }
 
     pub(crate) fn restrictions_for_host(&self, host: &str) -> DomainRestrictions {
@@ -278,18 +297,23 @@ mod tests {
     }
 
     #[test]
-    fn silence_checks_run_only_when_a_block_silences() {
-        assert!(!InstanceDomainBlocks::default().silences_any_domain());
+    fn silence_checks_run_only_when_a_block_could_silence_an_author() {
+        let authors = ["https://remote.example/users/alice"];
+        assert!(!InstanceDomainBlocks::default().may_silence_any(authors));
         assert!(
             !InstanceDomainBlocks::new(vec![block("noop.example", DomainBlockSeverity::Noop)])
-                .silences_any_domain()
+                .may_silence_any(authors)
         );
-        for severity in [DomainBlockSeverity::Silence, DomainBlockSeverity::Suspend] {
-            assert!(
-                InstanceDomainBlocks::new(vec![block("blocked.example", severity)])
-                    .silences_any_domain()
-            );
-        }
+        let silence =
+            InstanceDomainBlocks::new(vec![block("blocked.example", DomainBlockSeverity::Silence)]);
+        assert!(
+            silence.may_silence_any(authors),
+            "an acct domain the URI does not show may be silenced"
+        );
+        let suspend =
+            InstanceDomainBlocks::new(vec![block("blocked.example", DomainBlockSeverity::Suspend)]);
+        assert!(!suspend.may_silence_any(authors));
+        assert!(suspend.may_silence_any(["https://a.blocked.example/users/bob"]));
     }
 
     #[test]

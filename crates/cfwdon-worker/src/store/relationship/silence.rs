@@ -22,9 +22,6 @@ pub(crate) async fn silenced_authors_hidden_from<'a>(
     authors: impl IntoIterator<Item = (&'a str, &'a str)>,
 ) -> Result<HashSet<String>> {
     let blocks = instance_domain_blocks().await?;
-    if !blocks.silences_any_domain() {
-        return Ok(HashSet::new());
-    }
     let silenced = authors
         .into_iter()
         .filter(|(domain, actor_uri)| blocks.restrictions_for_actor(domain, actor_uri).silenced)
