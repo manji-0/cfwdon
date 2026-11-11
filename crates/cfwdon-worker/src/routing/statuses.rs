@@ -81,7 +81,7 @@ pub(crate) fn add_status_routes(router: Router<'static, ()>) -> Router<'static, 
         .get_async(
             "/users/:username/statuses/:id/quote_authorizations/:authorization_key",
             |req, ctx| async move {
-                authorized_activitypub_fetch(req, ctx, GuardedRoute::Object, |_, ctx, viewer| {
+                authorized_activitypub_fetch(req, ctx, GuardedRoute::Content, |_, ctx, viewer| {
                     status_quote_authorization_object_response(ctx, viewer)
                 })
                 .await

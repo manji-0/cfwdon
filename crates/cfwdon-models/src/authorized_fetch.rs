@@ -33,8 +33,11 @@ pub(crate) const VERDICTS: [SignedFetchVerdict; 4] = [
     SignedFetchVerdict::Signed,
 ];
 
-pub(crate) const RESOURCES: [FetchedResource; 2] =
-    [FetchedResource::Actor, FetchedResource::Object];
+pub(crate) const RESOURCES: [FetchedResource; 3] = [
+    FetchedResource::Actor,
+    FetchedResource::OwnerContent,
+    FetchedResource::SocialGraph,
+];
 
 impl AuthorizedFetchModel {
     pub(crate) fn access(state: &AuthorizedFetchModelState) -> FetchAccess {
@@ -42,7 +45,11 @@ impl AuthorizedFetchModel {
     }
 
     pub(crate) fn body(state: &AuthorizedFetchModelState) -> FetchedBody {
-        authorized_fetch_body(Self::access(state), state.signer_blocked_by_owner)
+        authorized_fetch_body(
+            Self::access(state),
+            state.resource,
+            state.signer_blocked_by_owner,
+        )
     }
 
     fn cycle_verdict(verdict: SignedFetchVerdict) -> SignedFetchVerdict {
@@ -56,8 +63,9 @@ impl AuthorizedFetchModel {
 
     fn cycle_resource(resource: FetchedResource) -> FetchedResource {
         match resource {
-            FetchedResource::Actor => FetchedResource::Object,
-            FetchedResource::Object => FetchedResource::Actor,
+            FetchedResource::Actor => FetchedResource::OwnerContent,
+            FetchedResource::OwnerContent => FetchedResource::SocialGraph,
+            FetchedResource::SocialGraph => FetchedResource::Actor,
         }
     }
 }
@@ -118,7 +126,7 @@ impl Model for AuthorizedFetchModel {
                 "objects_without_a_valid_signature_are_unauthorized",
                 |_, state: &AuthorizedFetchModelState| {
                     !state.secure_mode
-                        || state.resource != FetchedResource::Object
+                        || state.resource == FetchedResource::Actor
                         || !matches!(
                             state.verdict,
                             SignedFetchVerdict::Unsigned | SignedFetchVerdict::Invalid
@@ -145,11 +153,20 @@ impl Model for AuthorizedFetchModel {
                 },
             ),
             Property::always(
-                "blocked_signer_never_sees_the_owners_resource",
+                "blocked_signer_never_sees_the_owners_content",
                 |_, state: &AuthorizedFetchModelState| {
                     !state.secure_mode
                         || !state.signer_blocked_by_owner
+                        || state.resource != FetchedResource::OwnerContent
                         || AuthorizedFetchModel::body(state) != FetchedBody::Whole
+                },
+            ),
+            Property::always(
+                "owner_block_hides_only_the_owners_content",
+                |_, state: &AuthorizedFetchModelState| {
+                    AuthorizedFetchModel::body(state) != FetchedBody::Hidden
+                        || (state.resource == FetchedResource::OwnerContent
+                            && state.signer_blocked_by_owner)
                 },
             ),
             Property::always(
@@ -187,6 +204,15 @@ impl Model for AuthorizedFetchModel {
                 "blocked_signer_gets_nothing_of_the_owner",
                 |_, state: &AuthorizedFetchModelState| {
                     AuthorizedFetchModel::body(state) == FetchedBody::Hidden
+                },
+            ),
+            Property::sometimes(
+                "blocked_signer_still_reads_the_actor_and_its_social_graph",
+                |_, state: &AuthorizedFetchModelState| {
+                    state.secure_mode
+                        && state.signer_blocked_by_owner
+                        && state.resource != FetchedResource::OwnerContent
+                        && AuthorizedFetchModel::body(state) == FetchedBody::Whole
                 },
             ),
             Property::sometimes(

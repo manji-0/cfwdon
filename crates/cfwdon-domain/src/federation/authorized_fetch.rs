@@ -9,10 +9,22 @@
 pub enum FetchedResource {
     /// A user's actor document. Without a usable signature it is restricted,
     /// not refused, so a remote can still read the key to verify that user.
+    /// A signer the user blocks still gets it, as from Mastodon.
     Actor,
-    /// Notes, quote stamps, the outbox, and the follower, following and
-    /// featured collections.
-    Object,
+    /// What the owner posts: notes, quote stamps, the outbox, and the
+    /// featured posts and tags collections. A signer the owner blocks sees
+    /// none of it (Mastodon's `StatusPolicy#show?` and `for_signed_account`).
+    OwnerContent,
+    /// The follower and following collections. A signer the owner blocks
+    /// still gets them, as from Mastodon.
+    SocialGraph,
+}
+
+impl FetchedResource {
+    /// Whether the owner blocking the signer changes what a signed GET gets.
+    pub fn hidden_from_blocked_signer(self) -> bool {
+        self == Self::OwnerContent
+    }
 }
 
 /// What the `Signature` of a GET says about who asks.
@@ -71,8 +83,8 @@ pub enum FetchedBody {
     /// `publicKey` and `endpoints` of an actor (Mastodon's
     /// `restrict_fields_to`).
     RestrictedActor,
-    /// Nothing of the owner's: a note is `404`, a collection of the owner's
-    /// posts is empty (Mastodon's `StatusPolicy#show?` and `for_signed_account`).
+    /// None of the owner's content: a note is `404`, a collection of the
+    /// owner's posts is empty.
     Hidden,
     /// No body: the GET was refused.
     Denied,
@@ -93,19 +105,26 @@ pub fn authorized_fetch_access(
         (SignedFetchVerdict::Unsigned | SignedFetchVerdict::Invalid, FetchedResource::Actor) => {
             FetchAccess::Restricted
         }
-        (SignedFetchVerdict::Unsigned | SignedFetchVerdict::Invalid, FetchedResource::Object) => {
-            FetchAccess::Unauthorized
-        }
+        (
+            SignedFetchVerdict::Unsigned | SignedFetchVerdict::Invalid,
+            FetchedResource::OwnerContent | FetchedResource::SocialGraph,
+        ) => FetchAccess::Unauthorized,
     }
 }
 
 /// What the answer holds, given whether the resource's owner blocks the
 /// signer's account or domain. Only a signed GET names someone to block; an
 /// unsigned GET in public mode cannot be told apart from anyone else.
-pub fn authorized_fetch_body(access: FetchAccess, signer_blocked_by_owner: bool) -> FetchedBody {
+pub fn authorized_fetch_body(
+    access: FetchAccess,
+    resource: FetchedResource,
+    signer_blocked_by_owner: bool,
+) -> FetchedBody {
     match access {
         FetchAccess::Public => FetchedBody::Whole,
-        FetchAccess::Signed if signer_blocked_by_owner => FetchedBody::Hidden,
+        FetchAccess::Signed if signer_blocked_by_owner && resource.hidden_from_blocked_signer() => {
+            FetchedBody::Hidden
+        }
         FetchAccess::Signed => FetchedBody::Whole,
         FetchAccess::Restricted => FetchedBody::RestrictedActor,
         FetchAccess::Unauthorized | FetchAccess::Forbidden => FetchedBody::Denied,
@@ -130,7 +149,11 @@ mod tests {
 
     #[test]
     fn secure_mode_off_answers_everyone_publicly() {
-        for resource in [FetchedResource::Actor, FetchedResource::Object] {
+        for resource in [
+            FetchedResource::Actor,
+            FetchedResource::OwnerContent,
+            FetchedResource::SocialGraph,
+        ] {
             for verdict in [
                 SignedFetchVerdict::Unsigned,
                 SignedFetchVerdict::Invalid,
@@ -152,7 +175,19 @@ mod tests {
             FetchAccess::Restricted
         );
         assert_eq!(
-            authorized_fetch_access(true, FetchedResource::Object, SignedFetchVerdict::Invalid),
+            authorized_fetch_access(
+                true,
+                FetchedResource::OwnerContent,
+                SignedFetchVerdict::Invalid
+            ),
+            FetchAccess::Unauthorized
+        );
+        assert_eq!(
+            authorized_fetch_access(
+                true,
+                FetchedResource::SocialGraph,
+                SignedFetchVerdict::Unsigned
+            ),
             FetchAccess::Unauthorized
         );
         assert_eq!(
@@ -164,14 +199,18 @@ mod tests {
     }
 
     #[test]
-    fn blocked_signer_sees_nothing_of_the_owner() {
+    fn blocked_signer_loses_only_the_owners_content() {
+        let body =
+            |resource, blocked| authorized_fetch_body(FetchAccess::Signed, resource, blocked);
         assert_eq!(
-            authorized_fetch_body(FetchAccess::Signed, true),
+            body(FetchedResource::OwnerContent, true),
             FetchedBody::Hidden
         );
         assert_eq!(
-            authorized_fetch_body(FetchAccess::Signed, false),
+            body(FetchedResource::OwnerContent, false),
             FetchedBody::Whole
         );
+        assert_eq!(body(FetchedResource::Actor, true), FetchedBody::Whole);
+        assert_eq!(body(FetchedResource::SocialGraph, true), FetchedBody::Whole);
     }
 }

@@ -77,21 +77,7 @@ mod tests {
     fn actor(actor_uri: &str) -> RemoteActorProfile {
         RemoteActorProfile {
             actor_uri: actor_uri.to_owned(),
-            username: "bob".to_owned(),
-            domain: "remote.example".to_owned(),
-            locked: false,
-            bot: false,
-            discoverable: false,
-            indexable: false,
-            inbox_uri: format!("{actor_uri}/inbox"),
-            shared_inbox_uri: None,
-            public_key_id: format!("{actor_uri}#main-key"),
-            public_key_pem: "pem".to_owned(),
-            display_name: String::new(),
-            summary_html: String::new(),
-            profile_url: None,
-            avatar_url: None,
-            header_url: None,
+            ..RemoteActorProfile::default()
         }
     }
 

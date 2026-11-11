@@ -9,7 +9,7 @@
 //! unsigned.
 
 use crate::authorized_fetch::{
-    FetchViewer, activitypub_request_prefers_html, mark_signature_dependent,
+    FetchRequester, FetchViewer, activitypub_request_prefers_html, mark_signature_dependent,
 };
 use crate::db_session::bind_request_d1;
 use crate::http::{SignedFetch, verify_signed_fetch};
@@ -28,15 +28,19 @@ pub(crate) enum GuardedRoute {
     /// `/users/:username/statuses/:id` and `/@:username/:id`: a note, or its
     /// HTML page.
     Note,
-    /// Collections and quote stamps, served only as ActivityPub.
-    Object,
+    /// The outbox, the featured posts and tags collections, and quote
+    /// stamps: the owner's content, served only as ActivityPub.
+    Content,
+    /// The follower and following collections, served only as ActivityPub.
+    SocialGraph,
 }
 
 impl GuardedRoute {
     fn resource(self) -> FetchedResource {
         match self {
             Self::Actor => FetchedResource::Actor,
-            Self::Note | Self::Object => FetchedResource::Object,
+            Self::Note | Self::Content => FetchedResource::OwnerContent,
+            Self::SocialGraph => FetchedResource::SocialGraph,
         }
     }
 
@@ -44,7 +48,7 @@ impl GuardedRoute {
     fn serves_html_to(self, req: &Request) -> Result<bool> {
         match self {
             Self::Actor | Self::Note => activitypub_request_prefers_html(req),
-            Self::Object => Ok(false),
+            Self::Content | Self::SocialGraph => Ok(false),
         }
     }
 }
@@ -62,7 +66,8 @@ where
 {
     let config = load_config(&ctx);
     if !config.authorized_fetch || route.serves_html_to(&req)? {
-        return handler(req, ctx, FetchViewer::Anyone).await;
+        let viewer = FetchViewer::new(FetchRequester::Anyone, route.resource());
+        return handler(req, ctx, viewer).await;
     }
     let db = bind_request_d1(&ctx, &config)?;
     let signed = verify_signed_fetch(&req, &db).await?;
@@ -78,12 +83,13 @@ where
             .with_status(status),
         );
     }
-    let viewer = match signed {
-        SignedFetch::Signed(actor) => FetchViewer::Signed(actor),
+    let requester = match signed {
+        SignedFetch::Signed(actor) => FetchRequester::Signed(actor),
         SignedFetch::Unsigned | SignedFetch::Invalid(_) | SignedFetch::Refused => {
-            FetchViewer::Restricted
+            FetchRequester::Restricted
         }
     };
+    let viewer = FetchViewer::new(requester, route.resource());
     mark_signature_dependent(handler(req, ctx, viewer).await?)
 }
 
@@ -108,4 +114,35 @@ fn log_refused_fetch(req: &Request, signed: &SignedFetch, status: u16) {
             _ => None,
         },
     }));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::federation::RemoteActorProfile;
+
+    #[test]
+    fn owner_blocks_reach_only_routes_that_serve_the_owners_content() {
+        for (route, consults_owner_blocks) in [
+            (GuardedRoute::Actor, false),
+            (GuardedRoute::Note, true),
+            (GuardedRoute::Content, true),
+            (GuardedRoute::SocialGraph, false),
+        ] {
+            let signed = FetchViewer::new(
+                FetchRequester::Signed(RemoteActorProfile::default()),
+                route.resource(),
+            );
+            assert_eq!(
+                signed.signer_subject_to_owner_blocks().is_some(),
+                consults_owner_blocks,
+                "{route:?}"
+            );
+            let unsigned = FetchViewer::new(FetchRequester::Restricted, route.resource());
+            assert!(
+                unsigned.signer_subject_to_owner_blocks().is_none(),
+                "{route:?}"
+            );
+        }
+    }
 }

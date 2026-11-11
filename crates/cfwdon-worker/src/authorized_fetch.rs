@@ -8,13 +8,20 @@ use crate::federation::{RemoteActorProfile, host_within_blocked_domains};
 use crate::response_utils::{json_response, vary_including};
 use crate::store::relationship::is_blocking_actor;
 use crate::tracked_d1::D1Database;
-use cfwdon_domain::{FetchAccess, FetchedBody, RESTRICTED_ACTOR_FIELDS, authorized_fetch_body};
+use cfwdon_domain::{
+    FetchAccess, FetchedBody, FetchedResource, RESTRICTED_ACTOR_FIELDS, authorized_fetch_body,
+};
 use worker::{Request, Response, Result};
 
 const ACTIVITYPUB_CONTENT_TYPE: &str = "application/activity+json";
 
-/// Who a guarded handler answers.
-pub(crate) enum FetchViewer {
+/// Who a guarded handler answers, and what the route serves.
+pub(crate) struct FetchViewer {
+    requester: FetchRequester,
+    resource: FetchedResource,
+}
+
+pub(crate) enum FetchRequester {
     /// Secure mode is off, or the request is for an HTML page.
     Anyone,
     /// Secure mode, signed by this remote actor.
@@ -24,11 +31,18 @@ pub(crate) enum FetchViewer {
 }
 
 impl FetchViewer {
+    pub(crate) fn new(requester: FetchRequester, resource: FetchedResource) -> Self {
+        Self {
+            requester,
+            resource,
+        }
+    }
+
     fn access(&self) -> FetchAccess {
-        match self {
-            Self::Anyone => FetchAccess::Public,
-            Self::Signed(_) => FetchAccess::Signed,
-            Self::Restricted => FetchAccess::Restricted,
+        match self.requester {
+            FetchRequester::Anyone => FetchAccess::Public,
+            FetchRequester::Signed(_) => FetchAccess::Signed,
+            FetchRequester::Restricted => FetchAccess::Restricted,
         }
     }
 
@@ -40,19 +54,30 @@ impl FetchViewer {
         self.access() == FetchAccess::Signed
     }
 
-    /// Whether `owner_account_id`'s posts are hidden from this viewer: a
-    /// signer the owner blocks, by account or by domain (Mastodon's
-    /// `StatusPolicy#show?` and `for_signed_account`).
+    /// The signer whose blocks by the owner could change the answer: none
+    /// unless the GET is signed and the route serves the owner's content.
+    pub(crate) fn signer_subject_to_owner_blocks(&self) -> Option<&RemoteActorProfile> {
+        match &self.requester {
+            FetchRequester::Signed(signer) if self.resource.hidden_from_blocked_signer() => {
+                Some(signer)
+            }
+            FetchRequester::Signed(_) | FetchRequester::Anyone | FetchRequester::Restricted => None,
+        }
+    }
+
+    /// Whether `owner_account_id`'s content is hidden from this viewer: a
+    /// signer the owner blocks, by account or by domain, on a route that
+    /// serves the owner's content.
     pub(crate) async fn hides_owner_content(
         &self,
         db: &D1Database,
         owner_account_id: &str,
     ) -> Result<bool> {
-        let blocked = match self {
-            Self::Signed(signer) => owner_blocks_signer(db, owner_account_id, signer).await?,
-            Self::Anyone | Self::Restricted => false,
+        let blocked = match self.signer_subject_to_owner_blocks() {
+            Some(signer) => owner_blocks_signer(db, owner_account_id, signer).await?,
+            None => false,
         };
-        Ok(authorized_fetch_body(self.access(), blocked) == FetchedBody::Hidden)
+        Ok(authorized_fetch_body(self.access(), self.resource, blocked) == FetchedBody::Hidden)
     }
 }
 

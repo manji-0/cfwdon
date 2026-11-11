@@ -92,7 +92,7 @@ pub(crate) fn add_activitypub_routes(router: Router<'static, ()>) -> Router<'sta
             remote_follow_response(req, ctx).await
         })
         .get_async("/users/:username/followers", |req, ctx| async move {
-            authorized_activitypub_fetch(req, ctx, GuardedRoute::Object, |req, ctx, _| {
+            authorized_activitypub_fetch(req, ctx, GuardedRoute::SocialGraph, |req, ctx, _| {
                 followers_collection_response(req, ctx)
             })
             .await
@@ -101,7 +101,7 @@ pub(crate) fn add_activitypub_routes(router: Router<'static, ()>) -> Router<'sta
             static_head_response(ACTIVITYPUB_CONTENT_TYPE)
         })
         .get_async("/users/:username/following", |req, ctx| async move {
-            authorized_activitypub_fetch(req, ctx, GuardedRoute::Object, |req, ctx, _| {
+            authorized_activitypub_fetch(req, ctx, GuardedRoute::SocialGraph, |req, ctx, _| {
                 following_collection_response(req, ctx)
             })
             .await
@@ -112,7 +112,7 @@ pub(crate) fn add_activitypub_routes(router: Router<'static, ()>) -> Router<'sta
         .get_async(
             "/users/:username/collections/featured",
             |req, ctx| async move {
-                authorized_activitypub_fetch(req, ctx, GuardedRoute::Object, |_, ctx, viewer| {
+                authorized_activitypub_fetch(req, ctx, GuardedRoute::Content, |_, ctx, viewer| {
                     featured_collection_response(ctx, viewer)
                 })
                 .await
@@ -123,7 +123,7 @@ pub(crate) fn add_activitypub_routes(router: Router<'static, ()>) -> Router<'sta
             |_req, _ctx| async move { static_head_response(ACTIVITYPUB_CONTENT_TYPE) },
         )
         .get_async("/users/:username/collections/tags", |req, ctx| async move {
-            authorized_activitypub_fetch(req, ctx, GuardedRoute::Object, |_, ctx, viewer| {
+            authorized_activitypub_fetch(req, ctx, GuardedRoute::Content, |_, ctx, viewer| {
                 featured_tags_collection_response(ctx, viewer)
             })
             .await
@@ -139,7 +139,7 @@ pub(crate) fn add_activitypub_routes(router: Router<'static, ()>) -> Router<'sta
             inbox_response(req, ctx).await
         })
         .get_async("/users/:username/outbox", |req, ctx| async move {
-            authorized_activitypub_fetch(req, ctx, GuardedRoute::Object, outbox_response).await
+            authorized_activitypub_fetch(req, ctx, GuardedRoute::Content, outbox_response).await
         })
         .head_async("/users/:username/outbox", |_req, _ctx| async move {
             static_head_response(ACTIVITYPUB_CONTENT_TYPE)

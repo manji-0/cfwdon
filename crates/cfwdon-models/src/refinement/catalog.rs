@@ -476,7 +476,7 @@ pub const REFINEMENT_CATALOG: &[RefinementEntry] = &[
                 model_action: "ToggleOwnerBlock",
                 domain_call: "authorized_fetch_body",
                 implementation_call: "FetchViewer::hides_owner_content",
-                worker_guard: "signed fetch of a note, quote stamp, outbox or featured collection",
+                worker_guard: "signed fetch of the owner's content: a note, quote stamp, outbox or featured collection; never the actor or its follower and following collections",
             },
         ],
     },
