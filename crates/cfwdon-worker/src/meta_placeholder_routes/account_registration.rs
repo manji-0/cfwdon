@@ -5,7 +5,10 @@ use super::email_confirmation::{
 use super::{
     invalid_access_token_response, outside_authorized_scopes_response, validation_failed_response,
 };
-use crate::auth::{find_account_by_email, find_account_by_username, store_account_private_key};
+use crate::auth::{
+    find_account_by_email, find_account_by_username, hold_account_for_approval_statement,
+    store_account_private_key,
+};
 use crate::crypto_keys::generate_account_key_material;
 use crate::db_session::bind_request_d1;
 use crate::id_utils::generate_entity_id;
@@ -19,9 +22,9 @@ use crate::oauth_store::{
 };
 use crate::push::send_push_notification;
 use crate::request_utils::parse_optional_bool;
-use crate::runtime_config::load_config;
+use crate::runtime_config::{load_config, registrations_mode};
 use crate::tracked_d1::D1Database;
-use cfwdon_domain::IpSignUpDecision;
+use cfwdon_domain::{AccountApproval, sign_up_approval};
 use serde::Deserialize;
 use std::collections::BTreeMap;
 use worker::{Request, Response, Result, RouteContext, d1::D1Type};
@@ -130,6 +133,8 @@ async fn insert_registered_account(
     config: &cfwdon_core::AppConfig,
     username: &str,
     email: &str,
+    approval: AccountApproval,
+    reason: Option<&str>,
 ) -> Result<String> {
     let id = generate_entity_id(16)?;
     let display_name = username.to_owned();
@@ -142,8 +147,9 @@ async fn insert_registered_account(
         D1Type::Text(""),
         D1Type::Text(key_material.public_key_pem.as_str()),
     ];
-    db.prepare(
-        "INSERT INTO accounts (
+    let insert_account = db
+        .prepare(
+            "INSERT INTO accounts (
             id,
             username,
             access_email,
@@ -168,10 +174,14 @@ async fn insert_registered_account(
             CURRENT_TIMESTAMP,
             CURRENT_TIMESTAMP
         )",
-    )
-    .bind_refs(bindings.iter())?
-    .run()
-    .await?;
+        )
+        .bind_refs(bindings.iter())?;
+    // One batch, so a sign-up that must wait never exists as an approved account.
+    let mut statements = vec![insert_account];
+    if !approval.grants_api_access() {
+        statements.push(hold_account_for_approval_statement(db, &id, reason)?);
+    }
+    db.batch(statements).await?;
     store_account_private_key(db, config, &id, &key_material.private_key_jwk).await?;
 
     for admin_email in &config.admin_emails {
@@ -208,14 +218,15 @@ pub(crate) async fn create_account_placeholder_response(
     if !oauth_app_has_any_scope(&app, &["write:accounts", "write"]) {
         return outside_authorized_scopes_response();
     }
-    // No approval queue exists, so a range that needs approval cannot sign up
-    // either; Mastodon answers a refused sign-up with 403.
-    if ip_sign_up_decision(&req, &db).await != IpSignUpDecision::Open {
+    let Ok(approval) = sign_up_approval(
+        registrations_mode(&config),
+        ip_sign_up_decision(&req, &db).await,
+    ) else {
         return Ok(Response::from_json(
             &serde_json::json!({ "error": "This action is not allowed" }),
         )?
         .with_status(403));
-    }
+    };
 
     let request = match parse_account_registration_request(&mut req).await {
         Ok(request) => request,
@@ -252,6 +263,8 @@ pub(crate) async fn create_account_placeholder_response(
             .as_deref()
             .expect("validated username presence"),
         request.email.as_deref().expect("validated email presence"),
+        approval,
+        request.reason.as_deref(),
     )
     .await?;
     store_account_password(

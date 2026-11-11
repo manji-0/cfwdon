@@ -4,16 +4,19 @@ use crate::oauth_store::{
     find_legacy_oauth_access_token_with_account_by_plaintext,
     find_oauth_access_token_with_account_by_bearer_token,
     find_oauth_access_token_with_account_by_token_hash, find_oauth_app_by_bearer_token,
-    migrate_legacy_oauth_access_token_hash, oauth_access_token_has_any_scope,
-    oauth_bearer_token_hash, parse_bearer_authorization_header, set_auth0_session_cookies,
+    migrate_legacy_oauth_access_token_hash, note_credential_pending_approval,
+    oauth_access_token_has_any_scope, oauth_bearer_token_hash, parse_bearer_authorization_header,
+    reset_credential_pending_approval, set_auth0_session_cookies,
 };
 use crate::observability::log_federation_event;
 use crate::tracked_d1::D1Database;
 
 mod account_store;
+mod approvals;
 mod jwt;
 mod scopes;
 pub(crate) use account_store::*;
+pub(crate) use approvals::*;
 pub(crate) use jwt::*;
 use scopes::required_oauth_scopes;
 
@@ -179,6 +182,7 @@ async fn refresh_auth0_cookie_session(
 pub(crate) fn reset_auth0_web_session_state() {
     AUTH0_WEB_SESSION.with(|slot| slot.borrow_mut().take());
     OAUTH_SCOPE_DENIED.with(|flag| flag.set(false));
+    reset_credential_pending_approval();
 }
 
 /// True when this request presented a valid OAuth token whose scopes did not
@@ -275,9 +279,14 @@ async fn find_auth0_local_account_with_roles(
     let Some(user) = extract_authenticated_user(req, config).await? else {
         return Ok(None);
     };
-    let Some(account) = find_account_by_email(db, &user.email).await? else {
+    let Some((account, approval)) = find_account_with_approval_by_email(db, &user.email).await?
+    else {
         return Ok(None);
     };
+    if !approval.grants_api_access() {
+        note_credential_pending_approval();
+        return Ok(None);
+    }
     Ok(Some((account, user.roles)))
 }
 

@@ -1,8 +1,9 @@
 use crate::time_html::now_unix_timestamp;
 use crate::tracked_d1::D1Database;
-use cfwdon_domain::{LocalAccount, LocalAccountRecord};
+use cfwdon_domain::{AccountApproval, LocalAccount, LocalAccountRecord};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::cell::Cell;
 use url::Url;
 use worker::{Fetch, Headers, Method, Request, RequestInit, Response, Result, d1::D1Type};
 
@@ -370,9 +371,11 @@ pub(crate) async fn find_oauth_access_token_with_account_by_column(
                     a.header_content_type,
                     '' AS private_key_jwk,
                     a.public_key_pem,
-                    a.created_at
+                    a.created_at,
+                    p.account_id AS pending_account_id
              FROM oauth_access_tokens t
              LEFT JOIN accounts a ON a.id = t.account_id
+             LEFT JOIN pending_account_approvals p ON p.account_id = a.id
              WHERE {column} = ?1
                AND (t.expires_at IS NULL OR t.expires_at > ?2){legacy_guard}
              LIMIT 1"
@@ -395,12 +398,55 @@ pub(crate) const LEGACY_OAUTH_ACCESS_TOKEN_MIGRATE_SQL: &str = "UPDATE oauth_acc
          WHERE access_token = ?3
            AND access_token_hash IS NULL";
 
+thread_local! {
+    static CREDENTIAL_PENDING_APPROVAL: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Record that this request's credentials name an account still pending
+/// approval. Every credential lookup then reports no account, and the router
+/// turns the handler's 401 into Mastodon's 403 "pending approval".
+pub(crate) fn note_credential_pending_approval() {
+    CREDENTIAL_PENDING_APPROVAL.with(|flag| flag.set(true));
+}
+
+pub(crate) fn credential_pending_approval() -> bool {
+    CREDENTIAL_PENDING_APPROVAL.with(Cell::get)
+}
+
+pub(crate) fn reset_credential_pending_approval() {
+    CREDENTIAL_PENDING_APPROVAL.with(|flag| flag.set(false));
+}
+
+pub(crate) fn pending_approval_response() -> Result<Response> {
+    Ok(Response::from_json(&serde_json::json!({
+        "error": "Your login is currently pending approval",
+    }))?
+    .with_status(403))
+}
+
+/// A pending account's token is valid but authorizes nothing: the row decodes
+/// with no account, as Mastodon's `require_user!` refuses it.
 pub(crate) fn oauth_access_token_auth_from_joined_row(
     row: serde_json::Value,
 ) -> Result<Option<OAuthAccessTokenWithAccount>> {
     let token = serde_json::from_value::<OAuthAccessTokenRow>(row.clone()).map_err(|error| {
         worker::Error::RustError(format!("failed to decode OAuth access token row: {error}"))
     })?;
+    let approval = if row
+        .get("pending_account_id")
+        .is_some_and(|value| !value.is_null())
+    {
+        AccountApproval::Pending
+    } else {
+        AccountApproval::Approved
+    };
+    if !approval.grants_api_access() {
+        note_credential_pending_approval();
+        return Ok(Some(OAuthAccessTokenWithAccount {
+            token,
+            account: None,
+        }));
+    }
     let account = match row.get("id").and_then(serde_json::Value::as_str) {
         Some(_) => Some(
             serde_json::from_value::<LocalAccountRecord>(row)

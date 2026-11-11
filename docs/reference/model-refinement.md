@@ -37,7 +37,7 @@ The static catalog [`REFINEMENT_CATALOG`](../../crates/cfwdon-models/src/refinem
 | `local_follow_request` | `follow` | `follow_requests.rs` | yes |
 | `activitypub_visibility` | `remote::activitypub` | `activitypub/objects.rs`, `parse.rs` | yes |
 | `status_draft_publish` | `status::draft` | `request_parsing`, `statuses/status_insert.rs` | yes |
-| `registration_pipeline` | `account::registration` | `meta_placeholder_routes` | yes |
+| `registration_pipeline` | `account::registration`, `account::approval` | `meta_placeholder_routes/account_registration.rs`, `oauth_store.rs`, `auth.rs`, `admin_api/accounts.rs` | yes |
 | `access_provision` | `account::registration` | `auth/account_store` | yes |
 | `federation_request_policy` | `federation` | `http/request_validation.rs`, `federation/url_guard.rs`, `federation/domain_suspensions.rs`, `inbox.rs` | yes |
 | `federation_dns_policy` | `federation::dns` | `url_guard.rs` | yes |

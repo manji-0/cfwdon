@@ -3,6 +3,7 @@ import { writable } from "svelte/store";
 export type Page =
   | "dashboard"
   | "reports"
+  | "pending-accounts"
   | "emojis"
   | "deliveries"
   | "relays"
@@ -14,6 +15,7 @@ export type NavItem = Readonly<{ page: Page; href: string; label: string }>;
 export const navItems: ReadonlyArray<NavItem> = [
   { page: "dashboard", href: "/admin", label: "ダッシュボード" },
   { page: "reports", href: "/admin/reports", label: "レポート" },
+  { page: "pending-accounts", href: "/admin/pending-accounts", label: "承認待ちアカウント" },
   { page: "emojis", href: "/admin/emojis", label: "カスタム絵文字" },
   { page: "deliveries", href: "/admin/deliveries", label: "配信キュー" },
   { page: "relays", href: "/admin/relays", label: "リレー" },

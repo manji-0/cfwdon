@@ -453,6 +453,28 @@ def main() -> int:
             None,
         ),
         (
+            "oauth token decode seeks the pending approval",
+            """SELECT t.oauth_app_id, a.id, p.account_id AS pending_account_id
+               FROM oauth_access_tokens t
+               LEFT JOIN accounts a ON a.id = t.account_id
+               LEFT JOIN pending_account_approvals p ON p.account_id = a.id
+               WHERE t.access_token_hash = ?1
+                 AND (t.expires_at IS NULL OR t.expires_at > ?2)
+               LIMIT 1""",
+            ("sha256:abc", 0),
+            "t,a,p",
+        ),
+        (
+            "auth0 sign-in seeks the pending approval",
+            """SELECT a.id, p.account_id AS pending_account_id
+               FROM accounts a
+               LEFT JOIN pending_account_approvals p ON p.account_id = a.id
+               WHERE a.access_email = ?1
+               LIMIT 1""",
+            ("alice@example.com",),
+            "a,p",
+        ),
+        (
             "directory remote actor last status",
             """SELECT MAX(published_at) FROM remote_statuses WHERE actor_uri = ?""",
             ("https://remote.example/users/bob",),

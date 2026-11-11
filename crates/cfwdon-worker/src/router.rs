@@ -9,6 +9,7 @@ use crate::delivery::kick_outbox_process_queue_after_request;
 use crate::federation::{install_domain_suspensions, install_remote_dns_cache};
 use crate::http::install_secure_mode_fetch_signing;
 use crate::ip_blocks::ip_access_denied_response;
+use crate::oauth_store::{credential_pending_approval, pending_approval_response};
 use crate::rate_limit::{RateLimitGate, apply_rate_limit_headers, enforce_rate_limits};
 use crate::response_utils::into_mutable_response;
 use crate::routing::{
@@ -61,10 +62,10 @@ pub(crate) async fn handle_fetch(req: Request, env: Env) -> Result<Response> {
     let response = match dispatch_route(req, env, dispatch_method, &path).await {
         Ok(response) => {
             // Durable Object / ASSETS / Cache API responses are immutable.
-            let mut response = if response.status_code() == 401
-                && oauth_scope_denied()
-                && path.starts_with("/api/")
-            {
+            let refused_api_credential = response.status_code() == 401 && path.starts_with("/api/");
+            let mut response = if refused_api_credential && credential_pending_approval() {
+                pending_approval_response()?
+            } else if refused_api_credential && oauth_scope_denied() {
                 oauth_scope_denied_response()?
             } else {
                 into_mutable_response(response)?

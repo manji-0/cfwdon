@@ -140,9 +140,21 @@ Admins manage IP blocks through Mastodon's `/api/v1/admin/ip_blocks` (scopes `ad
 
 - `no_access` answers every request from the range with `403` before routing, except `GET /healthz`.
 - `sign_up_block` refuses `POST /api/v1/accounts` from the range with `403`.
-- `sign_up_requires_approval` also refuses the sign-up with `403`. cfwdon has no queue of accounts awaiting approval, so it cannot hold the account for review the way Mastodon does.
+- `sign_up_requires_approval` creates the account but holds it for an admin to approve, as described in [Registration Approval](#registration-approval).
 
 When several blocks cover an address, the strictest one in force applies. The client address is the `CF-Connecting-IP` header, which Cloudflare sets on every request it forwards to the Worker. An IPv4-mapped IPv6 address matches IPv4 ranges. A request without the header, such as a local `wrangler dev` call, matches no block. `X-Forwarded-For` is never read. Each isolate caches the block list for 60 seconds, and a failed D1 read applies no block rather than refusing every client.
+
+### Registration Approval
+<!-- derived-from #ip-blocks -->
+<!-- constrained-by ../reference/model-refinement.md#catalog -->
+
+`POST /api/v1/accounts` holds a new account for review when `REGISTRATIONS_MODE` is `approved` (Mastodon's `registrations_mode = approved`) or the client address is in a `sign_up_requires_approval` range. `cfwdon_domain::sign_up_approval` decides it. A `sign_up_block` range is refused before the form is read. A held account gets a row in `pending_account_approvals`, which the account insert writes in the same D1 batch, so the account never exists as approved first. The row keeps the sign-up `reason`. The sign-up still answers with an access token, as Mastodon does.
+
+A pending account cannot use the API. Its OAuth token decodes as no account, and an Auth0 sign-in with its e-mail resolves to no account. An API request that would answer `401` then answers `403` with `{"error":"Your login is currently pending approval"}`, Mastodon's `require_user!` message. The Auth0 OAuth authorize page answers the same `403` instead of "no local account". Endpoints that also serve anonymous readers treat the request as anonymous. Accounts that the Auth0 path provisions itself are never held, as Mastodon approves OmniAuth (`external`) sign-ups.
+
+Admins review held accounts with Mastodon's `POST /api/v1/admin/accounts/:id/approve` and `POST /api/v1/admin/accounts/:id/reject` (scope `admin:write:accounts`), or from the admin UI's "承認待ちアカウント" page, which lists `GET /api/cfwdon/admin/accounts/pending`. Approval deletes the pending row and answers the `Admin::Account` document. Rejection deletes the account, and its token, password, keys, and e-mail confirmation go with it through their foreign keys, so the username and e-mail can sign up again. It answers `{}`. Both answer `403` for an account that is not pending and `404` for an unknown id, and both write conditionally on the pending row, so two concurrent reviews cannot both act. The `registration_pipeline` Stateright model checks that a pending account never has API access and that only an open sign-up or an admin's approval grants it.
+
+`approval_required` in `/api/v1/instance` and `/api/v2/instance` reports `REGISTRATIONS_MODE`.
 
 ## Operational Plan
 <!-- constrained-by ../reference/configuration.md#cloudflare-bindings -->

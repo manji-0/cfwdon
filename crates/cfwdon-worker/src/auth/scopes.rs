@@ -67,6 +67,8 @@ const ADMIN_READ_DOMAIN_BLOCKS: &[&str] = &["admin:read", "admin:read:domain_blo
 const ADMIN_WRITE_DOMAIN_BLOCKS: &[&str] = &["admin:write", "admin:write:domain_blocks"];
 const ADMIN_READ_IP_BLOCKS: &[&str] = &["admin:read", "admin:read:ip_blocks"];
 const ADMIN_WRITE_IP_BLOCKS: &[&str] = &["admin:write", "admin:write:ip_blocks"];
+const ADMIN_READ_ACCOUNTS: &[&str] = &["admin:read", "admin:read:accounts"];
+const ADMIN_WRITE_ACCOUNTS: &[&str] = &["admin:write", "admin:write:accounts"];
 
 /// Scopes that authorize `method path` for a user OAuth token.
 ///
@@ -135,6 +137,7 @@ pub(crate) fn required_oauth_scopes(method: &str, path: &str) -> &'static [&'sta
         ["push", ..] => PUSH,
         ["admin", "domain_blocks", ..] => pick(ADMIN_READ_DOMAIN_BLOCKS, ADMIN_WRITE_DOMAIN_BLOCKS),
         ["admin", "ip_blocks", ..] => pick(ADMIN_READ_IP_BLOCKS, ADMIN_WRITE_IP_BLOCKS),
+        ["admin", "accounts", ..] => pick(ADMIN_READ_ACCOUNTS, ADMIN_WRITE_ACCOUNTS),
         _ => pick(READ_ANY, WRITE_ANY),
     }
 }
@@ -229,6 +232,16 @@ mod tests {
             "GET",
             "/api/v1/admin/domain_blocks",
             "admin:read:ip_blocks"
+        ));
+        assert!(allows(
+            "POST",
+            "/api/v1/admin/accounts/abc/approve",
+            "admin:write:accounts"
+        ));
+        assert!(!allows(
+            "POST",
+            "/api/v1/admin/accounts/abc/reject",
+            "admin:read:accounts"
         ));
     }
 

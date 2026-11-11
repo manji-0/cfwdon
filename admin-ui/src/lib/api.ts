@@ -164,6 +164,36 @@ export function deleteRelay(relayId: string): Promise<void> {
   });
 }
 
+/** Mastodon's `Admin::Account`, for a sign-up waiting for approval. */
+export type AdminPendingAccount = {
+  id: string;
+  username: string;
+  email: string;
+  created_at: string;
+  confirmed: boolean;
+  approved: boolean;
+  invite_request: string | null;
+};
+
+export function fetchPendingAccounts(): Promise<AdminPendingAccount[]> {
+  return apiFetch<AdminPendingAccount[]>("/api/cfwdon/admin/accounts/pending");
+}
+
+export function approveAccount(accountId: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/admin/accounts/${encodeURIComponent(accountId)}/approve`, {
+    method: "POST",
+    parseJson: false,
+  });
+}
+
+/** Deletes the pending account; its username and e-mail can sign up again. */
+export function rejectAccount(accountId: string): Promise<void> {
+  return apiFetch<void>(`/api/v1/admin/accounts/${encodeURIComponent(accountId)}/reject`, {
+    method: "POST",
+    parseJson: false,
+  });
+}
+
 export type DomainBlockSeverity = "suspend" | "silence" | "noop";
 
 export type AdminDomainBlock = {
