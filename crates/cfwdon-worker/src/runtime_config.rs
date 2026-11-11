@@ -1,6 +1,7 @@
 use crate::identity::{normalize_configured_instance_domain, parse_csv_list};
 use crate::policy_documents::policy_html_from_sources;
 use cfwdon_core::{AppConfig, BuildMetadata, TimelineAccessLevel, parse_custom_emojis_json};
+use cfwdon_domain::RegistrationsMode;
 use std::cell::RefCell;
 use worker::{Env, RouteContext};
 
@@ -269,8 +270,20 @@ where
     set_auth0_config(&vars, &mut config);
     set_federation_retention_config(&vars, &mut config);
     config.authorized_fetch = parse_enabled_flag(vars("AUTHORIZED_FETCH"));
+    config.registrations_approval_required = vars("REGISTRATIONS_MODE")
+        .and_then(|value| RegistrationsMode::from_name(&value))
+        .unwrap_or_default()
+        .approval_required();
 
     config
+}
+
+pub(crate) fn registrations_mode(config: &AppConfig) -> RegistrationsMode {
+    if config.registrations_approval_required {
+        RegistrationsMode::Approved
+    } else {
+        RegistrationsMode::Open
+    }
 }
 
 /// `true`, `1`, `yes` and `on` (any case) turn a flag on; anything else is off.
@@ -576,6 +589,25 @@ mod tests {
         assert_eq!(retention(Some("0")), None);
         assert_eq!(retention(Some("thirty")), Some(30));
         assert_eq!(retention(Some("-1")), Some(30));
+    }
+
+    #[test]
+    fn registrations_need_approval_only_in_approved_mode() {
+        assert!(!config_from_vars(|_| None).registrations_approval_required);
+        for (value, expected) in [
+            ("approved", true),
+            (" Approved ", true),
+            ("open", false),
+            ("none", false),
+            ("", false),
+        ] {
+            let config =
+                config_from_vars(|key| (key == "REGISTRATIONS_MODE").then(|| value.to_owned()));
+            assert_eq!(
+                config.registrations_approval_required, expected,
+                "REGISTRATIONS_MODE={value:?}"
+            );
+        }
     }
 
     #[test]

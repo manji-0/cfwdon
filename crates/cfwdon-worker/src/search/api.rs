@@ -9,6 +9,7 @@ use crate::accounts::{
 use crate::auth::find_authenticated_local_account;
 use crate::db_session::bind_request_d1;
 use crate::db_utils::d1_results;
+use crate::federation::instance_domain_blocks;
 use crate::remote::resolve_search_account;
 use crate::responses::MastodonAccountResponse;
 use crate::runtime_config::load_config;
@@ -179,7 +180,16 @@ pub(crate) async fn account_directory(req: Request, ctx: RouteContext<()>) -> Re
         }
     }
     if include_remote {
+        // Mastodon's `Account.discoverable` scope leaves out silenced accounts.
+        let domain_blocks = instance_domain_blocks().await?;
         for row in list_discoverable_remote_actor_rows(&db, fetch_limit, 0, order).await? {
+            let domain = row.acct.split_once('@').map_or("", |(_, domain)| domain);
+            if domain_blocks
+                .restrictions_for_actor(domain, &row.actor_uri)
+                .silenced
+            {
+                continue;
+            }
             entries.push((
                 row.sort_key,
                 row.acct,

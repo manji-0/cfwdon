@@ -67,6 +67,9 @@ pub struct AppConfig {
     /// Secure mode (Mastodon's `AUTHORIZED_FETCH`): this server's ActivityPub
     /// objects need a signed GET, and its own fetches are signed.
     pub authorized_fetch: bool,
+    /// Mastodon's `registrations_mode = approved`: every sign-up waits for an
+    /// admin to approve it.
+    pub registrations_approval_required: bool,
 }
 
 impl AppConfig {
@@ -118,6 +121,7 @@ impl AppConfig {
             auth0_admin_roles: Vec::new(),
             federation_activity_retention_days: Some(30),
             authorized_fetch: false,
+            registrations_approval_required: false,
         }
     }
 }

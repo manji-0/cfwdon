@@ -126,13 +126,26 @@ A claim left by an apply that was cut off goes stale after 15 minutes. The next 
 Admins manage instance domain blocks through Mastodon's `/api/v1/admin/domain_blocks` (scopes `admin:read:domain_blocks` and `admin:write:domain_blocks`) or the admin UI's `/api/cfwdon/admin/domain-blocks`. A block covers the domain and every subdomain: a block on `example.com` also covers `a.example.com`. When several blocks cover one host, each restriction applies if any of them imposes it. Each block carries Mastodon's `DomainBlock` fields:
 
 - `severity: "suspend"` refuses all federation. The Worker refuses inbox deliveries signed by or attributed to a suspended host with `403` before any key fetch. It skips outbound deliveries to a suspended host as terminal failures, and `url_guard` refuses remote fetches to one. A suspension also implies every restriction below. Rows that existed before severities were added stay `suspend`.
-- `severity: "silence"` hides the server's remote posts from the public and hashtag timelines, and a follow from one of its accounts waits for approval as if the local account were locked. Federation still works. Unlike Mastodon, a viewer who follows a silenced account does not see its posts on those timelines either, and silenced accounts' notifications and search results are not filtered.
+- `severity: "silence"` limits the server's accounts as Mastodon's `silence` does. Federation still works. See [Silenced Accounts](#silenced-accounts).
 - `severity: "noop"` limits nothing on its own and carries only the flags below.
 - `reject_media` stores no attachments for the server's remote posts and no avatar or header for its accounts. The Worker never downloads remote media, so this keeps the server's media URLs out of D1 and out of API responses. Rows stored before the block keep their media until the post or profile is refreshed.
 - `reject_reports` drops every inbound `Flag` from the server, so it files no report (see [Inbound Reports](#inbound-reports)).
 - `obfuscate`, `public_comment`, and `private_comment` shape the listings. `GET /api/v1/instance/domain_blocks` lists `silence` and `suspend` blocks publicly with each domain's SHA-256 digest, its severity, and its public comment. An obfuscated block shows the domain with its middle characters replaced by `*`, as Mastodon's `public_domain` does.
 
 Each isolate caches the block set for 60 seconds, so another isolate applies an admin edit within that time.
+
+#### Silenced Accounts
+<!-- derived-from #instance-domain-blocks -->
+
+A remote account is silenced when a `silence` or `suspend` block covers its acct domain or its actor URI's host. cfwdon has no per-account limit (Mastodon's `Account#silence!`), so domain blocks are the only source. Every check below goes through `InstanceDomainBlocks::restrictions_for_actor`, and the viewer-dependent ones through `store::relationship::silenced_authors_hidden_from`, which reads the viewer's accepted follows only when a block silences something. As in Mastodon:
+
+- Its posts stay off the public and hashtag timelines and their streams, even for followers (`PublicFeed`, `FanOutOnWriteService#broadcastable?`). They never trend, and its accounts are left out of `GET /api/v1/directory` (`Account.discoverable`).
+- A local account that follows it still gets its posts in the home timeline, lists, and notifications.
+- For anyone else, including anonymous readers, its replies are left out of a thread's ancestors and descendants (`StatusFilter#silenced_account?`), and its posts are left out of status search results (`StatusesSearchService`). Opening one of its posts directly, or looking it up by URL, still works.
+- A notification from it to a local account that does not follow it follows that account's `for_limited_accounts` policy for the kinds Mastodon lets a policy filter (mention, reblog, favourite, follow, follow request, quote). `accept` keeps it. `filter`, the default, and `drop` leave it out of the notification list, the unread count, and the streaming API. Mastodon files a filtered notification under notification requests. cfwdon's notification requests hold only follow requests, so a filtered notification is not listed there. Other kinds, such as poll results and edits, are kept.
+- A follow from it waits for approval, as if the local account were locked.
+
+Account search (`AccountSearchService`) does not filter silenced accounts in Mastodon, so cfwdon does not either. Follow suggestions list only local accounts.
 
 ### Inbound Reports
 <!-- derived-from #instance-domain-blocks -->
@@ -151,9 +164,21 @@ Admins manage IP blocks through Mastodon's `/api/v1/admin/ip_blocks` (scopes `ad
 
 - `no_access` answers every request from the range with `403` before routing, except `GET /healthz`.
 - `sign_up_block` refuses `POST /api/v1/accounts` from the range with `403`.
-- `sign_up_requires_approval` also refuses the sign-up with `403`. cfwdon has no queue of accounts awaiting approval, so it cannot hold the account for review the way Mastodon does.
+- `sign_up_requires_approval` creates the account but holds it for an admin to approve, as described in [Registration Approval](#registration-approval).
 
 When several blocks cover an address, the strictest one in force applies. The client address is the `CF-Connecting-IP` header, which Cloudflare sets on every request it forwards to the Worker. An IPv4-mapped IPv6 address matches IPv4 ranges. A request without the header, such as a local `wrangler dev` call, matches no block. `X-Forwarded-For` is never read. Each isolate caches the block list for 60 seconds, and a failed D1 read applies no block rather than refusing every client.
+
+### Registration Approval
+<!-- derived-from #ip-blocks -->
+<!-- constrained-by ../reference/model-refinement.md#catalog -->
+
+`POST /api/v1/accounts` holds a new account for review when `REGISTRATIONS_MODE` is `approved` (Mastodon's `registrations_mode = approved`) or the client address is in a `sign_up_requires_approval` range. `cfwdon_domain::sign_up_approval` decides it. A `sign_up_block` range is refused before the form is read. A held account gets a row in `pending_account_approvals`, which the account insert writes in the same D1 batch, so the account never exists as approved first. The row keeps the sign-up `reason`. The sign-up still answers with an access token, as Mastodon does.
+
+A pending account cannot use the API. Its OAuth token decodes as no account, and an Auth0 sign-in with its e-mail resolves to no account. An API request that would answer `401` then answers `403` with `{"error":"Your login is currently pending approval"}`, Mastodon's `require_user!` message. The Auth0 OAuth authorize page answers the same `403` instead of "no local account". Endpoints that also serve anonymous readers treat the request as anonymous. Accounts that the Auth0 path provisions itself are never held, as Mastodon approves OmniAuth (`external`) sign-ups.
+
+Admins review held accounts with Mastodon's `POST /api/v1/admin/accounts/:id/approve` and `POST /api/v1/admin/accounts/:id/reject` (scope `admin:write:accounts`), or from the admin UI's "承認待ちアカウント" page, which lists `GET /api/cfwdon/admin/accounts/pending`. Approval deletes the pending row and answers the `Admin::Account` document. Rejection deletes the account, and its token, password, keys, and e-mail confirmation go with it through their foreign keys, so the username and e-mail can sign up again. It answers `{}`. Both answer `403` for an account that is not pending and `404` for an unknown id, and both write conditionally on the pending row, so two concurrent reviews cannot both act. The `registration_pipeline` Stateright model checks that a pending account never has API access and that only an open sign-up or an admin's approval grants it.
+
+`approval_required` in `/api/v1/instance` and `/api/v2/instance` reports `REGISTRATIONS_MODE`.
 
 ## Operational Plan
 <!-- constrained-by ../reference/configuration.md#cloudflare-bindings -->

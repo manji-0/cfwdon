@@ -181,10 +181,10 @@ fn instance_v2_configuration(config: &AppConfig) -> serde_json::Value {
     })
 }
 
-fn instance_v2_registrations_document() -> serde_json::Value {
+fn instance_v2_registrations_document(config: &AppConfig) -> serde_json::Value {
     serde_json::json!({
         "enabled": instance_open_registrations(),
-        "approval_required": false,
+        "approval_required": config.registrations_approval_required,
         "reason_required": false,
         "message": "Registration is handled by Auth0.",
         "min_age": serde_json::Value::Null,
@@ -225,7 +225,7 @@ pub(crate) fn build_instance_v1_document(
         "thumbnail": instance_thumbnail_url(config),
         "languages": configured_instance_languages(config),
         "registrations": instance_open_registrations(),
-        "approval_required": false,
+        "approval_required": config.registrations_approval_required,
         "invites_enabled": false,
         "configuration": {
             "accounts": instance_accounts_configuration(false),
@@ -273,7 +273,7 @@ pub(crate) fn build_instance_v2_document(
     );
     response.insert(
         "registrations".to_owned(),
-        instance_v2_registrations_document(),
+        instance_v2_registrations_document(config),
     );
     response.insert(
         "api_versions".to_owned(),
@@ -374,5 +374,17 @@ mod tests {
             serde_json::json!(instance_open_registrations())
         );
         assert!(!instance_open_registrations());
+    }
+
+    #[test]
+    fn instance_documents_report_approval_mode() {
+        let mut config = AppConfig::new("https://social.example", "cfwdon", "test instance");
+        for approval_required in [false, true] {
+            config.registrations_approval_required = approval_required;
+            let v1 = build_instance_v1_document(&sample_summary(), &config, 1, 1, 1, 1);
+            let v2 = build_instance_v2_document(&sample_summary(), &config, 1);
+            assert_eq!(v1["approval_required"], approval_required);
+            assert_eq!(v2["registrations"]["approval_required"], approval_required);
+        }
     }
 }

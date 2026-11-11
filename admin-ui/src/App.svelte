@@ -4,6 +4,7 @@
   import DomainBlocks from "./pages/DomainBlocks.svelte";
   import IpBlocks from "./pages/IpBlocks.svelte";
   import Emojis from "./pages/Emojis.svelte";
+  import PendingAccounts from "./pages/PendingAccounts.svelte";
   import Relays from "./pages/Relays.svelte";
   import Reports from "./pages/Reports.svelte";
   import System from "./pages/System.svelte";
@@ -82,6 +83,8 @@
         <Dashboard {session} />
       {:else if $page === "reports"}
         <Reports />
+      {:else if $page === "pending-accounts"}
+        <PendingAccounts />
       {:else if $page === "emojis"}
         <Emojis />
       {:else if $page === "relays"}

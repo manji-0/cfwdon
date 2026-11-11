@@ -46,6 +46,33 @@ pub(crate) fn notification_type_allowed(
     !exclude.iter().any(|value| value == notification_type)
 }
 
+/// Mastodon's `Notification::PROPERTIES[type][:filterable]`: the kinds a
+/// notification policy may filter or drop.
+pub(crate) fn notification_type_filterable(notification_type: &str) -> bool {
+    matches!(
+        notification_type,
+        "mention"
+            | "reblog"
+            | "follow"
+            | "follow_request"
+            | "favourite"
+            | "quote"
+            | "added_to_collection"
+    )
+}
+
+/// Whether a notification from a silenced account the recipient does not
+/// follow stays in the recipient's list. Mastodon files it under notification
+/// requests (`filter`, the default) or drops it (`drop`) unless
+/// `for_limited_accounts` is `accept`. cfwdon keeps no filtered store for these
+/// kinds, so both leave the list.
+pub(crate) fn limited_sender_notification_listed(
+    notification_type: &str,
+    for_limited_accounts: &str,
+) -> bool {
+    !notification_type_filterable(notification_type) || for_limited_accounts == "accept"
+}
+
 pub(crate) fn notification_account_matches_filter(
     filter_account_id: Option<&str>,
     local_account_id: &str,

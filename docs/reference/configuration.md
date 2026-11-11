@@ -174,6 +174,14 @@ Each value is one of `public`, `authenticated`, or `disabled`. Missing or invali
 | --- | --- | --- | --- |
 | `AUTHORIZED_FETCH` | Optional | off | `true`, `1`, `yes`, or `on` turns on secure mode as described above. Any other value leaves it off. |
 
+## Registration Vars
+<!-- derived-from ../../wrangler.toml.example -->
+<!-- constrained-by ../architecture/cfwdon-architecture.md#registration-approval -->
+
+| Var | Required | Default / Behavior | Notes |
+| --- | --- | --- | --- |
+| `REGISTRATIONS_MODE` | Optional | `open` | `approved` holds every `POST /api/v1/accounts` sign-up for an admin to approve, as Mastodon's `registrations_mode = approved` does, and sets `approval_required` in the instance documents. Any other value, `none` included, means `open`. IP blocks with `sign_up_requires_approval` hold sign-ups from their ranges in either mode. |
+
 ## Logging Vars
 
 | Var | Required | Default / Behavior | Notes |

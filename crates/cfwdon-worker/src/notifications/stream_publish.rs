@@ -1,5 +1,8 @@
-use super::notification_timestamp_sort_token;
 use super::types::{MastodonNotificationResponse, NotificationEntry};
+use super::{
+    limited_sender_notification_listed, load_notification_policy_row,
+    notification_timestamp_sort_token, notification_type_filterable,
+};
 use super::{notification_api_numeric_id_string, notification_v1_value};
 use crate::activitypub::is_public_activitypub_visibility;
 use crate::auth::{find_account_by_id, find_account_by_username};
@@ -15,6 +18,7 @@ use crate::statuses::{
     build_local_status_response, build_remote_status_response, find_local_status_by_object_uri,
     load_in_reply_to_account_id, statuses_from_records,
 };
+use crate::store::relationship::silenced_authors_hidden_from;
 use crate::store::remote::find_remote_actor_by_actor_uri;
 use crate::stream_hub::publish_notification_stream_hub_event_soft;
 use crate::time_html::{now_iso_string, timestamp_to_mastodon_iso8601};
@@ -470,12 +474,50 @@ pub(crate) async fn publish_notification_response_soft(
     });
 }
 
+/// The REST listing's silence rule for one streamed notification: a remote
+/// sender's `acct` carries its domain and `uri` its actor URI.
+async fn streamed_notification_listed(
+    env: &Env,
+    config: &AppConfig,
+    recipient_account_id: &str,
+    notification: &MastodonNotificationResponse,
+) -> Result<bool> {
+    let Some((_, domain)) = notification.account.acct.split_once('@') else {
+        return Ok(true);
+    };
+    if !notification_type_filterable(&notification.notification_type) {
+        return Ok(true);
+    }
+    let db = D1Database::new(env.d1(&config.database_binding)?);
+    let hidden = silenced_authors_hidden_from(
+        &db,
+        Some(recipient_account_id),
+        [(domain, notification.account.uri.as_str())],
+    )
+    .await?;
+    if hidden.is_empty() {
+        return Ok(true);
+    }
+    let policy = load_notification_policy_row(&db, recipient_account_id).await?;
+    Ok(limited_sender_notification_listed(
+        &notification.notification_type,
+        &policy.for_limited_accounts,
+    ))
+}
+
 async fn publish_notification_response_now(
     env: &Env,
     config: &AppConfig,
     recipient_account_id: &str,
     notification: MastodonNotificationResponse,
 ) {
+    match streamed_notification_listed(env, config, recipient_account_id, &notification).await {
+        Ok(true) => {}
+        Ok(false) => return,
+        Err(error) => {
+            console_error!("failed to check a streamed notification's sender: {error}");
+        }
+    }
     let mut notification = notification;
     notification.created_at = timestamp_to_mastodon_iso8601(&notification.created_at);
     // Streamed notifications carry the same API id and group key as REST.

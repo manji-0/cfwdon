@@ -1,8 +1,13 @@
+mod approval;
 mod email;
 mod record;
 mod registration;
 mod username;
 
+pub use approval::{
+    AccountApproval, ApprovalReview, RegistrationsMode, ReviewOutcome, SignUpRefused,
+    sign_up_approval,
+};
 pub use email::{AccessEmail, AccessEmailError};
 pub use record::LocalAccountRecord;
 pub use registration::{
