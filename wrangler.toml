@@ -126,9 +126,19 @@ max_concurrency = 1
 name = "STREAM_HUB"
 class_name = "StreamHub"
 
+# Rate-limit counters: one instance per client address, account, app token
+# or sending server (see docs/reference/configuration.md#rate-limits).
+[[durable_objects.bindings]]
+name = "RATE_LIMIT_COUNTER"
+class_name = "RateLimitCounter"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["StreamHub"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["RateLimitCounter"]
 
 # Optional Workers Analytics Engine dataset for operational data points
 # (docs/operations/runbook.md#analytics-engine-metrics). Enable Analytics Engine

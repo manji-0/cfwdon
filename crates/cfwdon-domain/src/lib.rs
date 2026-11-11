@@ -8,6 +8,7 @@ pub mod instance;
 pub mod media;
 pub mod media_metadata;
 pub mod quote;
+pub mod rate_limit;
 pub mod remote;
 pub mod report;
 pub mod status;
