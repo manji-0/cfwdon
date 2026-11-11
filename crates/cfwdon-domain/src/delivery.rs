@@ -74,19 +74,21 @@ pub enum DeliveryAttemptOutcome {
     Success,
     /// Transient failure — retry with backoff until [`DELIVERY_MAX_ATTEMPTS`].
     Failure,
-    /// Non-retryable remote rejection (typical 4xx except 408/429).
+    /// Non-retryable remote rejection: a 4xx other than 401, 408 and 429, or a 501.
     PermanentFailure,
 }
 
 /// Classifies an HTTP status from a signed ActivityPub inbox POST.
 ///
-/// Aligns with common Mastodon / ActivityPub delivery practice: treat most 4xx as
-/// permanent, keep 408/429 and 5xx retryable, and accept any 2xx as success.
+/// Follows Mastodon's `response_error_unsalvageable?` (`JsonLdHelper`): a 4xx
+/// other than 401, 408 and 429, or a 501, will not change by asking again.
+/// A 401 stays retryable because the remote may not have fetched our key yet.
+/// Any 2xx is success; everything else is retried.
 pub fn delivery_disposition_for_http_status(status: u16) -> DeliveryAttemptOutcome {
     match status {
         200..=299 => DeliveryAttemptOutcome::Success,
-        408 | 429 => DeliveryAttemptOutcome::Failure,
-        400..=499 => DeliveryAttemptOutcome::PermanentFailure,
+        401 | 408 | 429 => DeliveryAttemptOutcome::Failure,
+        400..=499 | 501 => DeliveryAttemptOutcome::PermanentFailure,
         _ => DeliveryAttemptOutcome::Failure,
     }
 }
@@ -362,18 +364,20 @@ mod tests {
             delivery_disposition_for_http_status(410),
             DeliveryAttemptOutcome::PermanentFailure
         );
-        assert_eq!(
-            delivery_disposition_for_http_status(408),
-            DeliveryAttemptOutcome::Failure
-        );
-        assert_eq!(
-            delivery_disposition_for_http_status(429),
-            DeliveryAttemptOutcome::Failure
-        );
-        assert_eq!(
-            delivery_disposition_for_http_status(503),
-            DeliveryAttemptOutcome::Failure
-        );
+        for status in [400, 403, 404, 410, 422, 501] {
+            assert_eq!(
+                delivery_disposition_for_http_status(status),
+                DeliveryAttemptOutcome::PermanentFailure,
+                "HTTP {status}"
+            );
+        }
+        for status in [401, 408, 429, 500, 502, 503, 504, 302] {
+            assert_eq!(
+                delivery_disposition_for_http_status(status),
+                DeliveryAttemptOutcome::Failure,
+                "HTTP {status}"
+            );
+        }
         assert_eq!(
             delivery_disposition_for_http_status(202),
             DeliveryAttemptOutcome::Success
