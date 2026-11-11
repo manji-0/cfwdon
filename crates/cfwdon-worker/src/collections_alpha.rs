@@ -289,43 +289,47 @@ async fn optional_collection_viewer(
     db: &D1Database,
     config: &cfwdon_core::AppConfig,
 ) -> Result<std::result::Result<CollectionViewer, Response>> {
-    if app_bearer_token_from_request(req)?.is_some() {
-        match authenticate_local_api_request(req, db, config).await? {
-            LocalApiAuthentication::OAuthToken(auth) => {
-                if !oauth_access_token_has_any_scope(&auth.token, &["read:collections", "read"]) {
-                    return Ok(Err(outside_authorized_scopes_response()?));
-                }
-                return Ok(Ok(CollectionViewer {
-                    account: Some(auth.account),
-                }));
-            }
-            LocalApiAuthentication::AppToken | LocalApiAuthentication::InvalidBearer => {
-                return Ok(Err(invalid_access_token_response()?));
-            }
-            LocalApiAuthentication::Auth0(account) => {
-                return Ok(Ok(CollectionViewer {
-                    account: Some(account),
-                }));
-            }
-            LocalApiAuthentication::None => return Ok(Err(invalid_access_token_response()?)),
-            LocalApiAuthentication::PendingApproval(_) => {
-                return Ok(Err(pending_approval_response()?));
-            }
-        }
-    }
+    let bearer_present = app_bearer_token_from_request(req)?.is_some();
+    let authentication = authenticate_local_api_request(req, db, config).await?;
+    Ok(match collection_viewer(authentication, bearer_present) {
+        Ok(account) => Ok(CollectionViewer { account }),
+        Err(CollectionViewerRefusal::InvalidToken) => Err(invalid_access_token_response()?),
+        Err(CollectionViewerRefusal::OutsideScopes) => Err(outside_authorized_scopes_response()?),
+    })
+}
 
-    let account = match authenticate_local_api_request(req, db, config).await? {
-        LocalApiAuthentication::Auth0(account) => Some(account),
-        LocalApiAuthentication::None => None,
-        LocalApiAuthentication::OAuthToken(auth) => Some(auth.account),
+#[derive(Debug, PartialEq, Eq)]
+enum CollectionViewerRefusal {
+    InvalidToken,
+    OutsideScopes,
+}
+
+/// Reading collections serves anonymous readers, so a pending account's
+/// credential reads as no credential, as everywhere Mastodon skips
+/// `require_user!`. Writing collections goes through
+/// [`require_collection_reader`] and its writer counterpart, which refuse it.
+fn collection_viewer(
+    authentication: LocalApiAuthentication,
+    bearer_present: bool,
+) -> std::result::Result<Option<cfwdon_domain::LocalAccount>, CollectionViewerRefusal> {
+    match authentication {
+        LocalApiAuthentication::OAuthToken(auth) => {
+            if bearer_present
+                && !oauth_access_token_has_any_scope(&auth.token, &["read:collections", "read"])
+            {
+                return Err(CollectionViewerRefusal::OutsideScopes);
+            }
+            Ok(Some(auth.account))
+        }
+        LocalApiAuthentication::Auth0(account) => Ok(Some(account)),
         LocalApiAuthentication::AppToken | LocalApiAuthentication::InvalidBearer => {
-            return Ok(Err(invalid_access_token_response()?));
+            Err(CollectionViewerRefusal::InvalidToken)
         }
-        LocalApiAuthentication::PendingApproval(_) => {
-            return Ok(Err(pending_approval_response()?));
+        LocalApiAuthentication::None if bearer_present => {
+            Err(CollectionViewerRefusal::InvalidToken)
         }
-    };
-    Ok(Ok(CollectionViewer { account }))
+        LocalApiAuthentication::None | LocalApiAuthentication::PendingApproval(_) => Ok(None),
+    }
 }
 
 async fn require_collection_reader(
@@ -957,7 +961,34 @@ mod tests {
     use super::notifications::merge_collection_notification_policy_action;
     use super::routes::build_collection_offset_link_header_for_url;
     use super::*;
+    use crate::auth::PendingCredential;
     use crate::identity::actor_url;
+    use cfwdon_domain::{LocalAccount, LocalAccountRecord};
+
+    #[test]
+    fn a_pending_credential_reads_collections_as_an_anonymous_reader() {
+        for bearer_present in [true, false] {
+            let pending = LocalApiAuthentication::PendingApproval(PendingCredential {
+                account: LocalAccount::from_record(LocalAccountRecord::test_fixture(
+                    "acct-1", "alice",
+                )),
+                token: None,
+            });
+            assert_eq!(
+                collection_viewer(pending, bearer_present),
+                Ok(None),
+                "bearer present: {bearer_present}"
+            );
+        }
+        assert_eq!(
+            collection_viewer(LocalApiAuthentication::None, true),
+            Err(CollectionViewerRefusal::InvalidToken)
+        );
+        assert_eq!(
+            collection_viewer(LocalApiAuthentication::None, false),
+            Ok(None)
+        );
+    }
 
     fn fixture_config() -> cfwdon_core::AppConfig {
         cfwdon_core::AppConfig::new("https://social.example", "cfwdon", "test")

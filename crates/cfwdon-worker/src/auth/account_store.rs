@@ -189,7 +189,7 @@ const ACCOUNT_SELECT: &str = "SELECT id, username, access_email, display_name, b
 /// Mastodon's `check_account_approval`: an account waiting for approval does
 /// not exist for anyone but its own credentials, the admin review, and
 /// uniqueness checks.
-const APPROVED_ONLY: &str = "NOT EXISTS (
+pub(crate) const APPROVED_ONLY: &str = "NOT EXISTS (
          SELECT 1 FROM pending_account_approvals p WHERE p.account_id = accounts.id
      )";
 
@@ -203,12 +203,31 @@ pub(crate) enum AccountLookup {
     IncludingPending,
 }
 
+/// The columns an account lookup may key on. `access_email` is not one: an
+/// e-mail resolves to an account only through
+/// `find_credential_account_by_email`, which returns the approval with it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AccountKey {
+    Id,
+    Username,
+}
+
+impl AccountKey {
+    fn column(self) -> &'static str {
+        match self {
+            Self::Id => "id",
+            Self::Username => "username",
+        }
+    }
+}
+
 async fn find_account_where(
     db: &D1Database,
-    column: &str,
+    key: AccountKey,
     value: &str,
     lookup: AccountLookup,
 ) -> Result<Option<LocalAccount>> {
+    let column = key.column();
     let approval_filter = match lookup {
         AccountLookup::Approved => format!(" AND {APPROVED_ONLY}"),
         AccountLookup::IncludingPending => String::new(),
@@ -227,7 +246,7 @@ async fn find_account_where(
 
 /// An approved account by id; a pending one is not found.
 pub(crate) async fn find_account_by_id(db: &D1Database, id: &str) -> Result<Option<LocalAccount>> {
-    find_account_where(db, "id", id, AccountLookup::Approved).await
+    find_account_where(db, AccountKey::Id, id, AccountLookup::Approved).await
 }
 
 /// An approved account by username; a pending one is not found.
@@ -243,7 +262,7 @@ pub(crate) async fn find_account_by_id_with(
     id: &str,
     lookup: AccountLookup,
 ) -> Result<Option<LocalAccount>> {
-    find_account_where(db, "id", id, lookup).await
+    find_account_where(db, AccountKey::Id, id, lookup).await
 }
 
 pub(crate) async fn find_account_by_username_with(
@@ -252,5 +271,5 @@ pub(crate) async fn find_account_by_username_with(
     lookup: AccountLookup,
 ) -> Result<Option<LocalAccount>> {
     let username = username.trim().to_ascii_lowercase();
-    find_account_where(db, "username", &username, lookup).await
+    find_account_where(db, AccountKey::Username, &username, lookup).await
 }
