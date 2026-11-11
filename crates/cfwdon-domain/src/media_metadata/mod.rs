@@ -101,6 +101,28 @@ pub struct MalformedMedia {
     pub reason: &'static str,
 }
 
+/// How a container loses its metadata: a copy without it, or overwrites
+/// in the buffer the file arrived in.
+enum Rewrite {
+    Copy(Vec<u8>, Option<ExifOrientation>),
+    /// Same-length rewrites: a video is too large to copy within a Worker's
+    /// memory.
+    InPlace(edits::Edits),
+}
+
+fn rewrite(container: MediaContainer, bytes: &[u8]) -> Result<Rewrite, MalformedMedia> {
+    let copy = |(out, orientation)| Rewrite::Copy(out, orientation);
+    match container {
+        MediaContainer::Jpeg => jpeg::strip(bytes).map(copy),
+        MediaContainer::Png => png::strip(bytes).map(copy),
+        MediaContainer::Webp => webp::strip(bytes).map(copy),
+        MediaContainer::Heif => heif::strip(bytes).map(Rewrite::InPlace),
+        MediaContainer::Mp4 => mp4::strip(bytes).map(Rewrite::InPlace),
+        MediaContainer::Webm => webm::strip(bytes).map(Rewrite::InPlace),
+    }
+    .map_err(|reason| MalformedMedia { container, reason })
+}
+
 /// Rewrite a JPEG, PNG, WebP, HEIF, MP4 or WebM file without its metadata,
 /// judged by the bytes, not a declared type. `UnknownFormat` for anything
 /// else (GIF, MP3, ...); `MalformedMedia` when the container cannot be
@@ -109,20 +131,9 @@ pub fn strip_media_metadata(mut bytes: Vec<u8>) -> Result<MetadataStrip, Malform
     let Some(container) = MediaContainer::of(&bytes) else {
         return Ok(MetadataStrip::UnknownFormat(bytes));
     };
-    let malformed = |reason| MalformedMedia { container, reason };
-    let (bytes, orientation) = match container {
-        MediaContainer::Jpeg => jpeg::strip(&bytes).map_err(malformed)?,
-        MediaContainer::Png => png::strip(&bytes).map_err(malformed)?,
-        MediaContainer::Webp => webp::strip(&bytes).map_err(malformed)?,
-        // Same-length rewrites, made in the buffer the file arrived in: a
-        // video upload is too large to copy within a Worker's memory.
-        MediaContainer::Heif | MediaContainer::Mp4 | MediaContainer::Webm => {
-            let edits = match container {
-                MediaContainer::Heif => heif::strip(&bytes),
-                MediaContainer::Mp4 => mp4::strip(&bytes),
-                _ => webm::strip(&bytes),
-            }
-            .map_err(malformed)?;
+    let (bytes, orientation) = match rewrite(container, &bytes)? {
+        Rewrite::Copy(out, orientation) => (out, orientation),
+        Rewrite::InPlace(edits) => {
             edits.apply(&mut bytes);
             (bytes, None)
         }
@@ -134,16 +145,42 @@ pub fn strip_media_metadata(mut bytes: Vec<u8>) -> Result<MetadataStrip, Malform
     }))
 }
 
-/// The bytes to write in place of an already stored object, judged by the
-/// bytes as on upload: `None` when the object carries nothing to strip
-/// (already clean, or a format without a stripper, such as GIF). Unlike an
-/// upload, the declared type is not checked: the object is already public,
-/// and only its metadata goes.
-pub fn restripped_stored_media(bytes: &[u8]) -> Result<Option<Vec<u8>>, MalformedMedia> {
-    Ok(match strip_media_metadata(bytes.to_vec())? {
-        MetadataStrip::Stripped(stripped) if stripped.bytes != bytes => Some(stripped.bytes),
-        _ => None,
+/// What to do with an already stored object.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum StoredMediaRestrip {
+    /// Write these bytes in its place.
+    Rewrite(Vec<u8>),
+    /// Nothing to strip: already clean, or a format without metadata to
+    /// strip, such as GIF.
+    Unchanged,
+    /// A TIFF, which keeps its EXIF: no lossless rewrite drops it.
+    Tiff,
+}
+
+/// The stored object `bytes` without its metadata, judged by the bytes as on
+/// upload. Unlike an upload, the declared type is not checked: the object is
+/// already public, and only its metadata goes. A video is rewritten in the
+/// buffer it came in, and nothing is copied when nothing changes.
+pub fn restripped_stored_media(mut bytes: Vec<u8>) -> Result<StoredMediaRestrip, MalformedMedia> {
+    let Some(container) = MediaContainer::of(&bytes) else {
+        return Ok(if is_tiff(&bytes) {
+            StoredMediaRestrip::Tiff
+        } else {
+            StoredMediaRestrip::Unchanged
+        });
+    };
+    Ok(match rewrite(container, &bytes)? {
+        Rewrite::Copy(out, _) if out != bytes => StoredMediaRestrip::Rewrite(out),
+        Rewrite::InPlace(edits) if edits.change(&bytes) => {
+            edits.apply(&mut bytes);
+            StoredMediaRestrip::Rewrite(bytes)
+        }
+        Rewrite::Copy(..) | Rewrite::InPlace(_) => StoredMediaRestrip::Unchanged,
     })
+}
+
+fn is_tiff(bytes: &[u8]) -> bool {
+    bytes.starts_with(b"II*\0") || bytes.starts_with(b"MM\0*")
 }
 
 /// Why an upload cannot be stored without its metadata.
@@ -210,7 +247,7 @@ pub fn strip_upload_metadata(
             }
         }
         MetadataStrip::UnknownFormat(bytes) => {
-            if bytes.starts_with(b"II*\0") || bytes.starts_with(b"MM\0*") {
+            if is_tiff(&bytes) {
                 Err(UnstrippableUpload::Tiff)
             } else if declared_image || declared_video {
                 Err(not_declared())

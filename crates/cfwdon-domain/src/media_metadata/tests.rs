@@ -1048,11 +1048,18 @@ fn uploads_are_refused_when_damaged_mislabelled_or_tiff() {
 
 #[test]
 fn stored_media_is_rewritten_only_when_it_carries_metadata() {
-    let rewrite = restripped_stored_media(PHOTO_JPG)
-        .unwrap()
-        .expect("carries EXIF");
-    assert_no_secrets(&rewrite);
-    assert_eq!(restripped_stored_media(&rewrite), Ok(None));
-    assert_eq!(restripped_stored_media(b"GIF89a\x01\0\x01\0"), Ok(None));
-    assert!(restripped_stored_media(&PHOTO_PNG[..50]).is_err());
+    let restrip = |bytes: &[u8]| restripped_stored_media(bytes.to_vec());
+    for fixture in [PHOTO_JPG, PHOTO_AVIF, CLIP_MP4, CLIP_WEBM] {
+        let Ok(StoredMediaRestrip::Rewrite(rewrite)) = restrip(fixture) else {
+            panic!("a fixture carrying metadata is rewritten");
+        };
+        assert_no_secrets(&rewrite);
+        assert_eq!(restrip(&rewrite), Ok(StoredMediaRestrip::Unchanged));
+    }
+    assert_eq!(
+        restrip(b"GIF89a\x01\0\x01\0"),
+        Ok(StoredMediaRestrip::Unchanged)
+    );
+    assert_eq!(restrip(b"II*\0\x08\0\0\0"), Ok(StoredMediaRestrip::Tiff));
+    assert!(restrip(&PHOTO_PNG[..50]).is_err());
 }

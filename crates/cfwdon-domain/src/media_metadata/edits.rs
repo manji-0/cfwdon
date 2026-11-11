@@ -73,6 +73,47 @@ impl Edits {
             out[at..at + data.len()].copy_from_slice(&data);
         }
     }
+
+    /// Whether applying the edits to `bytes` would change any of them,
+    /// judged without a copy of the bytes.
+    pub(super) fn change(&self, bytes: &[u8]) -> bool {
+        if self
+            .writes
+            .iter()
+            .any(|(&at, data)| bytes[at..at + data.len()] != data[..])
+        {
+            return true;
+        }
+        // The writes hold, so a fill changes something only where no write
+        // lands over it. Both are in position order.
+        let mut written = self
+            .writes
+            .iter()
+            .map(|(&at, data)| (at, at + data.len()))
+            .peekable();
+        for (&start, &(end, byte)) in &self.fills {
+            let mut pos = start;
+            while pos < end {
+                while written
+                    .next_if(|&(_, write_end)| write_end <= pos)
+                    .is_some()
+                {}
+                let unwritten_end = match written.peek() {
+                    Some(&(write_start, write_end)) if write_start <= pos => {
+                        pos = write_end;
+                        continue;
+                    }
+                    Some(&(write_start, _)) => write_start.min(end),
+                    None => end,
+                };
+                if bytes[pos..unwritten_end].iter().any(|&b| b != byte) {
+                    return true;
+                }
+                pos = unwritten_end;
+            }
+        }
+        false
+    }
 }
 
 #[cfg(test)]
@@ -101,6 +142,16 @@ mod tests {
         edits.write(1, b"xy");
         edits.fill(0..4, 0);
         assert_eq!(applied(edits, 5), b"\0xy\0.");
+    }
+
+    #[test]
+    fn a_change_is_judged_on_the_bytes_the_edits_leave() {
+        let mut edits = Edits::default();
+        edits.fill(0..6, 0);
+        edits.write(1, b"ab");
+        assert!(!edits.change(b"\0ab\0\0\0."));
+        assert!(edits.change(b"\0ab\0x\0."));
+        assert!(edits.change(b"\0aX\0\0\0."));
     }
 
     #[test]

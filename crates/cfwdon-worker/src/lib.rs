@@ -10,7 +10,7 @@ use crate::federation::{install_domain_suspensions, install_remote_dns_cache};
 use crate::federation_retention::prune_terminal_federation_activities;
 use crate::inbox::reclaim_stale_inbox_activities;
 use crate::instance::{refresh_instance_activity_cache, refresh_trending_statuses_cache};
-use crate::media_metadata_backfill::strip_stored_media_metadata_page;
+use crate::media_metadata_backfill::run_stored_media_metadata_backfill;
 use crate::observability::log_federation_event;
 use crate::polls::process_expired_polls_for_config;
 use crate::relays::purge_stale_public_remote_content;
@@ -253,14 +253,6 @@ async fn scheduled(event: ScheduledEvent, env: Env, _ctx: ScheduleContext) {
             {
                 console_error!("federation activity retention prune failed: {error}");
             }
-            match env.bucket(&config.media_binding) {
-                Ok(bucket) => {
-                    if let Err(error) = strip_stored_media_metadata_page(&db, &bucket).await {
-                        console_error!("stored media metadata backfill failed: {error}");
-                    }
-                }
-                Err(error) => console_error!("stored media metadata backfill failed: {error}"),
-            }
             if let Err(error) = refresh_instance_activity_cache(&db).await {
                 console_error!("instance activity cache refresh failed: {error}");
             }
@@ -283,6 +275,10 @@ async fn scheduled(event: ScheduledEvent, env: Env, _ctx: ScheduleContext) {
         console_error!("scheduled maintenance failed: {error}");
     }
     deferred::run_deferred_tasks_inline().await;
+    if run_hourly {
+        // Last: an object too costly to strip may end the invocation.
+        run_stored_media_metadata_backfill(&env, &config).await;
+    }
 }
 
 #[cfg(test)]
