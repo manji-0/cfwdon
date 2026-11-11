@@ -81,9 +81,21 @@ const TIMESTAMPED: [u32; 3] = [MVHD, TKHD, MDHD];
 
 /// Track handlers whose samples are timed metadata, not picture or sound:
 /// ISO timed metadata (GoPro's `gpmd` GPS and sensor track, DJI's `djmd`,
-/// Apple's `mebx`) and Google's camera motion metadata (`camm`, which
-/// carries GPS fixes).
-const METADATA_TRACK_HANDLERS: [u32; 2] = [META, fourcc(b"camm")];
+/// Apple's `mebx`), Google's camera motion metadata (`camm`, which carries
+/// GPS fixes), timed text (DJI drones caption every frame with its GPS
+/// position, height and camera settings) and the QuickTime timecode track
+/// (the time of day the recording started). Timed text is dropped even when
+/// it holds captions a person wrote: Chrome and Firefox do not show an MP4's
+/// own text track, so captions rarely matter to a viewer, while a drone's
+/// captions are a trail of where it flew.
+const METADATA_TRACK_HANDLERS: [u32; 6] = [
+    META,
+    fourcc(b"camm"),
+    fourcc(b"text"),
+    fourcc(b"sbtl"),
+    fourcc(b"subt"),
+    fourcc(b"tmcd"),
+];
 
 /// `uuid` boxes known to hold metadata wherever they are: XMP, Canon's CMT
 /// (EXIF with GPS), Sony's user metadata. Other `uuid` boxes below the top

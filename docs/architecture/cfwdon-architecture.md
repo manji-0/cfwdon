@@ -163,12 +163,14 @@ Cameras and phones write the GPS position, device, owner, and capture time into 
 | --- | --- | --- |
 | JPEG | APP1 EXIF and XMP, APP13 IPTC, other APPn, comments, bytes after EOI | JFIF, ICC profile, Adobe marker, image data, a non-default EXIF orientation |
 | PNG | `tEXt`, `zTXt`, `iTXt`, `tIME`, `eXIf`, private chunks | critical, colour, and animation chunks, a non-default orientation |
-| WebP | `EXIF`, `XMP `, and unknown chunks; the VP8X flags and RIFF size are corrected | `ICCP`, `ALPH`, `ANIM`, `ANMF`, image data, a non-default orientation |
-| HEIF (AVIF, HEIC) | EXIF and XMP items, overwritten in place | everything else, including `irot` and `imir` |
-| MP4, MOV | `udta`, `meta`, `XMP_`, `prft`, metadata `uuid` boxes, and timed metadata tracks such as GoPro GPS, replaced by `free` boxes of the same size; `mvhd`, `tkhd`, and `mdhd` times are zeroed | sample data and every offset |
+| WebP | `EXIF`, `XMP `, and unknown chunks, also inside `ANMF` frames; the VP8X flags and RIFF size are corrected | `ICCP`, `ALPH`, `ANIM`, `ANMF` frame headers, image data, a non-default orientation |
+| HEIF (AVIF, HEIC) | EXIF and XMP items, overwritten in place; an image sequence's `moov` is stripped as an MP4's is | everything else, including `irot` and `imir` |
+| MP4, MOV | `udta`, `meta`, `XMP_`, `prft`, metadata `uuid` boxes, and timed metadata tracks such as GoPro GPS, timed text tracks (`text`, `sbtl`, `subt`) and timecode tracks (`tmcd`), replaced by `free` boxes of the same size with their samples zeroed; `mvhd`, `tkhd`, and `mdhd` times are zeroed | sample data and every offset |
 | WebM, Matroska | `Tags`, `Attachments`, title, date, file names, segment UIDs, and track names, replaced by `Void` elements of the same size | clusters, cues, chapters, muxing and writing app |
 
 The orientation goes back in as a new EXIF block that holds only that tag, so a rotated phone photo still displays upright.
+
+Timed text goes even when it holds captions a person wrote. DJI drones write their GPS position, height, and camera settings as a caption on every frame. Chrome and Firefox do not show an MP4's own text track, so few viewers lose captions they would have seen.
 
 Every path that stores user media calls `strip_upload_metadata` before the R2 put: media attachments, avatars and headers, and custom emoji. The bytes decide the container, not the declared type. The upload is refused with 422 when the file is damaged, when a declared image or video type does not match the bytes, or when the file is TIFF, which is EXIF throughout. GIF, audio, and other formats without a stripper are stored as uploaded.
 

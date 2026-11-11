@@ -58,6 +58,7 @@ pub(super) fn child_boxes(bytes: &[u8], start: usize, end: usize) -> Option<Vec<
 
 const FTYP: u32 = fourcc(b"ftyp");
 const META: u32 = fourcc(b"meta");
+const MOOV: u32 = fourcc(b"moov");
 const IINF: u32 = fourcc(b"iinf");
 const INFE: u32 = fourcc(b"infe");
 const ILOC: u32 = fourcc(b"iloc");
@@ -295,6 +296,12 @@ pub(super) fn strip(bytes: &[u8]) -> Result<Edits, &'static str> {
     let top = child_boxes(bytes, 0, bytes.len())
         .filter(|top| top.first().is_some_and(|first| first.kind == FTYP))
         .ok_or("the boxes do not fit the file")?;
+    // An image sequence (animated AVIF, HEIF burst) is also a movie, whose
+    // `moov` carries the user data and times a video does; the movie walk
+    // also blanks the items of the top-level `meta`.
+    if top.iter().any(|child| child.kind == MOOV) {
+        return super::mp4::strip(bytes);
+    }
     let meta = top
         .iter()
         .copied()

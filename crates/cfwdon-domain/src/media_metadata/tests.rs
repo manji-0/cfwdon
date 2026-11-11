@@ -474,6 +474,36 @@ fn webp_drops_exif_xmp_and_unknown_chunks_and_fixes_flags() {
 }
 
 #[test]
+fn webp_animation_frames_keep_only_their_picture_chunks() {
+    let image = &webp_chunks(PHOTO_WEBP)
+        .into_iter()
+        .find(|(kind, _)| kind == "VP8 ")
+        .unwrap()
+        .1;
+    let frame_header = [7u8; 16];
+    let frame = |chunks: &[(&[u8; 4], &[u8])]| webp_of(chunks)[12..].to_vec();
+    let anmf = [
+        &frame_header[..],
+        &frame(&[(b"ALPH", b"a"), (b"VP8 ", image), (b"XYZW", b"secret-gps")]),
+    ]
+    .concat();
+    let vp8x = [&[0x12u8][..], &[0; 9]].concat();
+    let input = webp_of(&[(b"VP8X", &vp8x), (b"ANIM", &[0; 6]), (b"ANMF", &anmf)]);
+
+    let out = stripped(&input);
+    assert_no_secrets(&out.bytes);
+    let chunks = webp_chunks(&out.bytes);
+    assert_eq!(chunk_types(&chunks), ["VP8X", "ANIM", "ANMF"]);
+    let kept = [
+        &frame_header[..],
+        &frame(&[(b"ALPH", b"a"), (b"VP8 ", image)]),
+    ]
+    .concat();
+    assert_eq!(chunks[2].1, kept);
+    assert_stable(&out);
+}
+
+#[test]
 fn webp_refuses_a_riff_size_past_the_end_and_a_file_without_image_data() {
     assert_eq!(
         malformed_reason(&PHOTO_WEBP[..PHOTO_WEBP.len() - 1]),
@@ -783,6 +813,64 @@ fn mp4_fragments_over_the_same_samples_are_filled_once() {
     let edits = mp4::strip(&input).expect("a readable fragmented MP4");
     assert!(edits.written_bytes() <= input.len());
     assert!(!contains(&stripped(&input).bytes, b"xxxx"));
+}
+
+#[test]
+fn mp4_drops_timed_text_and_timecode_tracks() {
+    let ftyp = mp4_box(b"ftyp", b"isom\0\0\0\0isom");
+    let text = b"secret-gps 35.6586 139.7454";
+    let timecode = b"\x00\x11\x22\x33";
+    let build = |mdat_body: u32| {
+        mp4_box(
+            b"moov",
+            &[
+                full_box(b"mvhd", &[0; 96]),
+                track(1, b"sbtl", mdat_body, text.len() as u32),
+                track(2, b"tmcd", mdat_body + text.len() as u32, 4),
+            ]
+            .concat(),
+        )
+    };
+    let mdat_body = (ftyp.len() + build(0).len() + 8) as u32;
+    let input = [
+        ftyp,
+        build(mdat_body),
+        mp4_box(b"mdat", &[&text[..], timecode].concat()),
+    ]
+    .concat();
+    let out = stripped(&input);
+    assert_no_secrets(&out.bytes);
+    assert!(!contains(&out.bytes, timecode));
+    assert!(!contains(&out.bytes, b"trak"));
+}
+
+#[test]
+fn an_image_sequence_loses_its_movie_metadata_too() {
+    // An animated AVIF: a still image's `meta` and a movie's `moov`.
+    let ftyp = mp4_box(b"ftyp", b"avis\0\0\0\0avismif1");
+    let meta = full_box(
+        b"meta",
+        &full_box(b"hdlr", &[&[0; 4][..], b"pict", &[0; 13]].concat()),
+    );
+    let mvhd = full_box(
+        b"mvhd",
+        &[&0x5ec2_e700u32.to_be_bytes()[..], &[0; 92]].concat(),
+    );
+    let udta = mp4_box(
+        b"udta",
+        &mp4_box(b"\xa9xyz", b"\0\x12\0\0+35.6586+139.7454/"),
+    );
+    let input = [
+        ftyp,
+        meta,
+        mp4_box(b"moov", &[mvhd, udta].concat()),
+        mp4_box(b"mdat", b"frames"),
+    ]
+    .concat();
+    let out = stripped(&input);
+    assert_eq!(out.container, MediaContainer::Heif);
+    assert_no_secrets(&out.bytes);
+    assert!(!contains(&out.bytes, &0x5ec2_e700u32.to_be_bytes()));
 }
 
 #[test]

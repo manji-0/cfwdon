@@ -3,8 +3,12 @@ use super::exif::{ExifOrientation, exif_orientation, orientation_tiff};
 
 /// Chunks of an extended WebP that make up the picture; EXIF, XMP and
 /// unknown chunks go.
-const KEPT_CHUNKS: [&[u8]; 6] = [b"ICCP", b"ANIM", b"ANMF", b"ALPH", b"VP8 ", b"VP8L"];
-const IMAGE_CHUNKS: [&[u8]; 3] = [b"VP8 ", b"VP8L", b"ANMF"];
+const KEPT_CHUNKS: [&[u8]; 5] = [b"ICCP", b"ANIM", b"ALPH", b"VP8 ", b"VP8L"];
+const IMAGE_CHUNKS: [&[u8]; 2] = [b"VP8 ", b"VP8L"];
+/// Chunks an animation frame keeps after its header; unknown ones go.
+const FRAME_CHUNKS: [&[u8]; 3] = [b"ALPH", b"VP8 ", b"VP8L"];
+/// An `ANMF` payload starts with the frame's position, size, duration and flags.
+const FRAME_HEADER: usize = 16;
 
 const VP8X_EXIF: u8 = 0x08;
 const VP8X_XMP: u8 = 0x04;
@@ -14,6 +18,32 @@ fn push_chunk(out: &mut Vec<u8>, chunk: &[u8], size: usize) {
     if size % 2 == 1 {
         out.push(0);
     }
+}
+
+/// An `ANMF` chunk holding `frame`'s header and only its picture chunks.
+fn push_frame(out: &mut Vec<u8>, frame: &[u8]) -> Result<(), &'static str> {
+    if frame.len() < FRAME_HEADER {
+        return Err("an animation frame is too short");
+    }
+    let chunk_start = out.len();
+    out.extend_from_slice(b"ANMF\0\0\0\0");
+    out.extend_from_slice(&frame[..FRAME_HEADER]);
+    let mut pos = FRAME_HEADER;
+    while pos + 8 <= frame.len() {
+        let kind = &frame[pos..pos + 4];
+        let size = u32le(frame, pos + 4) as usize;
+        let data_end = pos.saturating_add(8).saturating_add(size);
+        if data_end > frame.len() {
+            return Err("a frame chunk runs past its frame");
+        }
+        if FRAME_CHUNKS.contains(&kind) {
+            push_chunk(out, &frame[pos..data_end], size);
+        }
+        pos = data_end + size % 2;
+    }
+    let size = (out.len() - chunk_start - 8) as u32;
+    out[chunk_start + 4..chunk_start + 8].copy_from_slice(&size.to_le_bytes());
+    Ok(())
 }
 
 pub(super) fn strip(bytes: &[u8]) -> Result<(Vec<u8>, Option<ExifOrientation>), &'static str> {
@@ -53,6 +83,9 @@ pub(super) fn strip(bytes: &[u8]) -> Result<(Vec<u8>, Option<ExifOrientation>), 
                     out.extend_from_slice(&tiff);
                 }
             }
+        } else if kind == b"ANMF" {
+            saw_image = true;
+            push_frame(&mut out, &bytes[pos + 8..data_end])?;
         } else if KEPT_CHUNKS.contains(&kind) {
             saw_image |= IMAGE_CHUNKS.contains(&kind);
             push_chunk(&mut out, &bytes[pos..data_end], size);
