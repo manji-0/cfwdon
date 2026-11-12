@@ -32,6 +32,61 @@ pub(crate) async fn replace_local_status_mentions(
     replace_status_mention_rows(db, status_id, created_at, &rows).await
 }
 
+/// Statuses one hourly run resolves from `status_mentions_backfill`. Each costs
+/// two lookups and one batch, so a page stays well inside the subrequest limit.
+const STATUS_MENTIONS_BACKFILL_PAGE: i32 = 50;
+
+/// Writes `status_mentions` rows for a page of statuses stored before those
+/// rows existed (queued by migration `136`), then dequeues the page. Mention
+/// notifications read only these rows. Returns how many were dequeued.
+pub(crate) async fn run_status_mentions_backfill(
+    db: &D1Database,
+    config: &AppConfig,
+) -> Result<usize> {
+    #[derive(serde::Deserialize)]
+    struct QueuedStatus {
+        status_id: String,
+        created_at: Option<String>,
+        text_content: Option<String>,
+    }
+    let page = D1Type::Integer(STATUS_MENTIONS_BACKFILL_PAGE);
+    let result = db
+        .prepare(
+            "SELECT b.status_id, s.created_at, s.text_content
+             FROM status_mentions_backfill b
+             LEFT JOIN statuses s ON s.id = b.status_id
+             ORDER BY b.status_id
+             LIMIT ?1",
+        )
+        .bind_refs(&page)?
+        .all()
+        .await?;
+    let queued = d1_results::<QueuedStatus>(&result)?;
+    if queued.is_empty() {
+        return Ok(0);
+    }
+    for status in &queued {
+        // A status deleted since it was queued has nothing to resolve.
+        if let (Some(created_at), Some(text)) = (&status.created_at, &status.text_content) {
+            replace_local_status_mentions(db, config, &status.status_id, created_at, text).await?;
+        }
+    }
+    let ids = json_string_array(
+        &queued
+            .iter()
+            .map(|status| status.status_id.as_str())
+            .collect::<Vec<_>>(),
+    );
+    db.prepare(format!(
+        "DELETE FROM status_mentions_backfill WHERE status_id {}",
+        sql_in_json_each(1)
+    ))
+    .bind_refs(&D1Type::Text(&ids))?
+    .run()
+    .await?;
+    Ok(queued.len())
+}
+
 /// Writes `remote_status_mentions` rows for a remote status. Prefers explicit
 /// AP `tag` entries of type `Mention`; falls back to text-extracted handles.
 pub(crate) async fn replace_remote_status_mentions(

@@ -9,9 +9,9 @@ SELECT printf('noise%07d', n), '100000000000000008', '<p>noise</p>', 'noise', 'p
        strftime('%Y-%m-%dT%H:%M:%SZ', '2020-01-01', '+' || n || ' seconds')
 FROM series;
 WITH RECURSIVE series(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM series WHERE n < @N@)
-INSERT INTO favourites (account_id, status_id, target_uri, created_at, updated_at)
+INSERT INTO favourites (account_id, status_id, target_uri, notified_account_id, created_at, updated_at)
 SELECT '100000000000000007', printf('noise%07d', n), 'local:' || printf('noise%07d', n),
-       '2020-01-02T00:00:00Z', '2020-01-02T00:00:00Z'
+       '100000000000000008', '2020-01-02T00:00:00Z', '2020-01-02T00:00:00Z'
 FROM series;
 INSERT INTO remote_actors (actor_uri, username, domain, inbox_uri, public_key_id, public_key_pem)
 VALUES ('https://noise.example/users/n', 'n', 'noise.example', 'https://noise.example/inbox',

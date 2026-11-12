@@ -25,12 +25,14 @@ pub(super) fn remote_status_upsert_sql() -> &'static str {
         edited_at,
         card_json,
         federated_emojis_json,
-        in_reply_to_id
+        in_reply_to_id,
+        quoted_account_id
     ) VALUES (
         ?1, ?2, ?3, ?4, ?5, NULL, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
         CURRENT_TIMESTAMP,
         ?16,
-        ?17, ?18, ?19, ?20
+        ?17, ?18, ?19, ?20,
+        (SELECT target.account_id FROM statuses target WHERE target.ap_id = ?6)
     )
     ON CONFLICT(object_uri) DO UPDATE SET
         actor_uri = excluded.actor_uri,
@@ -58,7 +60,8 @@ pub(super) fn remote_status_upsert_sql() -> &'static str {
             ELSE remote_statuses.card_json
         END,
         federated_emojis_json = excluded.federated_emojis_json,
-        in_reply_to_id = COALESCE(excluded.in_reply_to_id, remote_statuses.in_reply_to_id)"
+        in_reply_to_id = COALESCE(excluded.in_reply_to_id, remote_statuses.in_reply_to_id),
+        quoted_account_id = excluded.quoted_account_id"
 }
 
 pub(super) fn remote_status_upsert_bindings(intent: &StoredRemoteStatusIntent) -> [D1Type<'_>; 20] {
@@ -103,10 +106,12 @@ pub(super) fn remote_reblog_upsert_sql() -> &'static str {
         quote_state,
         published_at,
         raw_object_json,
+        quoted_account_id,
         created_at,
         updated_at
     ) VALUES (
         ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15,
+        (SELECT target.account_id FROM statuses target WHERE target.ap_id = ?7),
         CURRENT_TIMESTAMP,
         CURRENT_TIMESTAMP
     )
@@ -128,6 +133,7 @@ pub(super) fn remote_reblog_upsert_sql() -> &'static str {
         END,
         published_at = excluded.published_at,
         raw_object_json = excluded.raw_object_json,
+        quoted_account_id = excluded.quoted_account_id,
         updated_at = CURRENT_TIMESTAMP"
 }
 

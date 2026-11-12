@@ -81,7 +81,7 @@ console.log("CONTEXT_SHAPE_MID|" + JSON.stringify({ a: midCtx.json.ancestors.map
 await measure("account", "alice", "GET", `/api/v1/accounts/${ids.bob}`);
 await measure("account statuses(20)", "alice", "GET", `/api/v1/accounts/${ids.bob}/statuses?limit=20`);
 await measure("relationships(2)", "alice", "GET", `/api/v1/accounts/relationships?id[]=${ids.bob}&id[]=${ids.carol}`);
-await measure("notifications(20)", "alice", "GET", "/api/v1/notifications?limit=20");
+shape("notifications", await measure("notifications(20)", "alice", "GET", "/api/v1/notifications?limit=20"));
 await measure("bookmarks(20)", "alice", "GET", "/api/v1/bookmarks?limit=20");
 await measure("favourites(20)", "alice", "GET", "/api/v1/favourites?limit=20");
 await measure("conversations", "alice", "GET", "/api/v1/conversations");
@@ -94,3 +94,18 @@ await measure("POST unreblog", "alice", "POST", `/api/v1/statuses/${target}/unre
 await measure("POST bookmark", "alice", "POST", `/api/v1/statuses/${target}/bookmark`);
 await measure("POST follow", "alice", "POST", `/api/v1/accounts/${ids.f1}/follow`);
 await measure("POST unfollow", "alice", "POST", `/api/v1/accounts/${ids.f1}/unfollow`);
+// Every notification kind the scenario can produce, for SHAPE comparisons:
+// a quote, a reblog and a favourite of alice's post, a mention, then each
+// listing that is built from the same collectors.
+if (process.env.SHAPE) {
+  const quoted = id(await call("alice", "POST", "/api/v1/statuses", { status: "quote me" }));
+  await call("carol", "POST", "/api/v1/statuses", { status: "quoting", quoted_status_id: quoted });
+  await call("carol", "POST", `/api/v1/statuses/${quoted}/reblog`);
+  await call("bob", "POST", `/api/v1/statuses/${quoted}/favourite`);
+  await call("carol", "POST", "/api/v1/statuses", { status: "hi @qcalice" });
+  await sleep(1000);
+  shape("notifications_all", (await call("alice", "GET", "/api/v1/notifications?limit=40")).json);
+  shape("notifications_v2", (await call("alice", "GET", "/api/v2/notifications?limit=40")).json);
+  shape("notifications_unread", (await call("alice", "GET", "/api/v1/notifications/unread_count")).json);
+  shape("notifications_mentions", (await call("alice", "GET", "/api/v1/notifications?types[]=mention&limit=5")).json);
+}

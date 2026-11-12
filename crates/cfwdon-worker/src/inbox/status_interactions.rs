@@ -77,7 +77,7 @@ pub(crate) async fn handle_inbox_like(
     upsert_remote_favourite(
         db,
         &remote_actor.actor_uri,
-        &status.id,
+        &status,
         object_uri,
         activity_uri,
     )
@@ -128,7 +128,7 @@ pub(crate) async fn handle_inbox_announce(
         upsert_remote_reblog(
             db,
             &remote_actor.actor_uri,
-            &status.id,
+            &status,
             object_uri,
             activity_uri,
         )

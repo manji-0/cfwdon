@@ -479,6 +479,16 @@ pub(crate) fn local_status_target_uri(status: &LocalStatus) -> String {
         .unwrap_or_else(|| format!("local:{}", status.id))
 }
 
+/// `notified_account_id` of a favourite or boost of `status` by `actor_id`:
+/// the author, unless the author interacts with their own status.
+pub(crate) fn notified_account_binding<'a>(status: &'a LocalStatus, actor_id: &str) -> D1Type<'a> {
+    if status.account_id == actor_id {
+        D1Type::Null
+    } else {
+        D1Type::Text(status.account_id.as_str())
+    }
+}
+
 pub(crate) async fn find_local_status_by_object_uri(
     db: &D1Database,
     config: &AppConfig,
@@ -500,5 +510,49 @@ pub(crate) async fn find_local_status_by_object_uri(
         Ok(Some(status))
     } else {
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::notified_account_binding;
+    use cfwdon_domain::{LocalStatus, QuoteState, Visibility};
+    use worker::d1::D1Type;
+
+    fn status_by(account_id: &str) -> LocalStatus {
+        LocalStatus {
+            id: "s1".to_owned(),
+            account_id: account_id.to_owned(),
+            ap_id: None,
+            in_reply_to_id: None,
+            in_reply_to_account_id: None,
+            boost_of_uri: None,
+            quote_of_uri: None,
+            content_html: String::new(),
+            text: String::new(),
+            spoiler_text: String::new(),
+            visibility: Visibility::Public,
+            sensitive: false,
+            language: None,
+            quote_approval_policy: None,
+            quote_state: QuoteState::Accepted,
+            application_id: None,
+            card_json: None,
+            created_at: "2026-05-10T01:02:03Z".to_owned(),
+            updated_at: None,
+        }
+    }
+
+    #[test]
+    fn interactions_notify_the_author_unless_the_author_interacts() {
+        let status = status_by("author");
+        assert!(matches!(
+            notified_account_binding(&status, "fan"),
+            D1Type::Text("author")
+        ));
+        assert!(matches!(
+            notified_account_binding(&status, "author"),
+            D1Type::Null
+        ));
     }
 }

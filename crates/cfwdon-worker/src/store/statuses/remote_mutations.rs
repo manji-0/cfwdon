@@ -1,4 +1,5 @@
 use crate::tracked_d1::D1Database;
+use cfwdon_domain::LocalStatus;
 use worker::Result;
 use worker::d1::D1Type;
 pub(crate) async fn delete_remote_status_by_id(db: &D1Database, status_id: &str) -> Result<()> {
@@ -43,21 +44,24 @@ pub(crate) async fn delete_remote_status_by_id(db: &D1Database, status_id: &str)
     Ok(())
 }
 
+/// `status` is the local status the remote actor interacted with; its author
+/// is the account the row notifies.
 pub(crate) async fn upsert_remote_favourite(
     db: &D1Database,
     remote_actor_uri: &str,
-    status_id: &str,
+    status: &LocalStatus,
     target_uri: &str,
     activity_uri: Option<&str>,
 ) -> Result<()> {
     let bindings = [
         D1Type::Text(remote_actor_uri),
-        D1Type::Text(status_id),
+        D1Type::Text(status.id.as_str()),
         D1Type::Text(target_uri),
         match activity_uri {
             Some(value) => D1Type::Text(value),
             None => D1Type::Null,
         },
+        D1Type::Text(status.account_id.as_str()),
     ];
     db.prepare(
         "INSERT INTO remote_favourites (
@@ -65,6 +69,7 @@ pub(crate) async fn upsert_remote_favourite(
             status_id,
             target_uri,
             activity_uri,
+            notified_account_id,
             created_at,
             updated_at
         ) VALUES (
@@ -72,12 +77,14 @@ pub(crate) async fn upsert_remote_favourite(
             ?2,
             ?3,
             ?4,
+            ?5,
             CURRENT_TIMESTAMP,
             CURRENT_TIMESTAMP
         )
         ON CONFLICT(remote_actor_uri, target_uri) DO UPDATE SET
             status_id = excluded.status_id,
             activity_uri = excluded.activity_uri,
+            notified_account_id = excluded.notified_account_id,
             updated_at = CURRENT_TIMESTAMP",
     )
     .bind_refs(bindings.iter())?
@@ -121,21 +128,24 @@ pub(crate) async fn delete_remote_favourite(
     Ok(())
 }
 
+/// `status` is the local status the remote actor interacted with; its author
+/// is the account the row notifies.
 pub(crate) async fn upsert_remote_reblog(
     db: &D1Database,
     remote_actor_uri: &str,
-    status_id: &str,
+    status: &LocalStatus,
     target_uri: &str,
     activity_uri: Option<&str>,
 ) -> Result<()> {
     let bindings = [
         D1Type::Text(remote_actor_uri),
-        D1Type::Text(status_id),
+        D1Type::Text(status.id.as_str()),
         D1Type::Text(target_uri),
         match activity_uri {
             Some(value) => D1Type::Text(value),
             None => D1Type::Null,
         },
+        D1Type::Text(status.account_id.as_str()),
     ];
     db.prepare(
         "INSERT INTO remote_reblogs (
@@ -143,6 +153,7 @@ pub(crate) async fn upsert_remote_reblog(
             status_id,
             target_uri,
             activity_uri,
+            notified_account_id,
             created_at,
             updated_at
         ) VALUES (
@@ -150,12 +161,14 @@ pub(crate) async fn upsert_remote_reblog(
             ?2,
             ?3,
             ?4,
+            ?5,
             CURRENT_TIMESTAMP,
             CURRENT_TIMESTAMP
         )
         ON CONFLICT(remote_actor_uri, target_uri) DO UPDATE SET
             status_id = excluded.status_id,
             activity_uri = excluded.activity_uri,
+            notified_account_id = excluded.notified_account_id,
             updated_at = CURRENT_TIMESTAMP",
     )
     .bind_refs(bindings.iter())?

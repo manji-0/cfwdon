@@ -28,10 +28,10 @@ pub(crate) async fn list_local_quote_notifications_for_account(
         .prepare(format!(
             "SELECT s.id, s.account_id, s.ap_id, s.in_reply_to_id, s.boost_of_uri, s.quote_of_uri, s.content_html, s.text_content, s.spoiler_text, s.visibility, s.sensitive, s.language, s.quote_state, s.created_at
              FROM statuses s
-             JOIN statuses target
+             CROSS JOIN statuses target
                ON target.ap_id = s.quote_of_uri
-             WHERE target.account_id = ?1
-               AND s.account_id != ?1
+              AND target.account_id = ?1
+             WHERE s.quoted_account_id = ?1
                AND s.quote_state = 'accepted'{}
              ORDER BY s.created_at DESC
              LIMIT ?2",
@@ -57,9 +57,10 @@ pub(crate) async fn list_remote_quote_notifications_for_account(
         .prepare(format!(
             "SELECT rs.id, rs.actor_uri, rs.object_uri, rs.url, rs.in_reply_to_uri, rs.boost_of_uri, rs.quote_of_uri, rs.content_html, rs.text_content, rs.spoiler_text, rs.visibility, rs.sensitive, rs.language, rs.quote_state, rs.published_at
              FROM remote_statuses rs
-             JOIN statuses target
+             CROSS JOIN statuses target
                ON target.ap_id = rs.quote_of_uri
-             WHERE target.account_id = ?1
+              AND target.account_id = ?1
+             WHERE rs.quoted_account_id = ?1
                AND rs.quote_state = 'accepted'{}
              ORDER BY rs.published_at DESC, rs.id DESC
              LIMIT ?2",
@@ -88,6 +89,7 @@ pub(crate) async fn list_quoted_update_notifications_for_account(
              JOIN remote_statuses rs
                ON rs.object_uri = s.quote_of_uri
              WHERE s.account_id = ?1
+               AND s.quote_of_uri IS NOT NULL
                AND s.quote_state != 'revoked'
                AND rs.edited_at IS NOT NULL
                AND rs.edited_at > s.created_at{}

@@ -32,11 +32,7 @@ pub(crate) async fn list_reblog_notifications_for_account(
         .prepare(format!(
             "SELECT r.account_id, r.status_id, r.created_at
              FROM reblogs r
-             JOIN statuses s
-               ON s.id = r.status_id
-             WHERE s.account_id = ?1
-               AND r.account_id != ?1
-               AND r.status_id IS NOT NULL{}
+             WHERE r.notified_account_id = ?1{}
              ORDER BY r.created_at DESC
              LIMIT ?2",
             bounds.clause("r.created_at", 3)
@@ -66,12 +62,12 @@ pub(crate) async fn list_poll_notifications_for_account(
              FROM status_polls p
              JOIN statuses s
                ON s.id = p.status_id
-             LEFT JOIN status_poll_votes v
-               ON v.poll_id = p.id
-              AND v.account_id = ?1
-             WHERE datetime(replace(replace(p.expires_at, 'T', ' '), 'Z', '')) <= CURRENT_TIMESTAMP
-               AND (s.account_id = ?1 OR v.account_id = ?1){}
-             GROUP BY p.id, p.status_id, s.account_id, p.expires_at
+             WHERE p.id IN (
+                     SELECT id FROM status_polls WHERE account_id = ?1
+                     UNION
+                     SELECT poll_id FROM status_poll_votes WHERE account_id = ?1
+                   )
+               AND datetime(replace(replace(p.expires_at, 'T', ' '), 'Z', '')) <= CURRENT_TIMESTAMP{}
              ORDER BY p.expires_at DESC
              LIMIT ?2",
             bounds.clause("p.expires_at", 3)

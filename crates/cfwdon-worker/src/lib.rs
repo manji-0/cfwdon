@@ -22,6 +22,7 @@ use crate::polls::process_expired_polls_for_config;
 use crate::relays::purge_stale_public_remote_content;
 use crate::runtime_config::load_config_from_env;
 use crate::scheduled_statuses::process_due_scheduled_statuses_for_config;
+use crate::statuses::run_status_mentions_backfill;
 use crate::store::relationship::purge_expired_mutes;
 use crate::store::statuses::purge_expired_status_idempotency_keys;
 use crate::tags::refresh_trending_tags_cache;
@@ -309,6 +310,14 @@ async fn scheduled(event: ScheduledEvent, env: Env, _ctx: ScheduleContext) {
             .await
             {
                 console_error!("federation activity retention prune failed: {error}");
+            }
+            if let Err(error) = timed_cron_task(
+                "status_mentions_backfill",
+                run_status_mentions_backfill(&db, &config),
+            )
+            .await
+            {
+                console_error!("status mentions backfill failed: {error}");
             }
             if let Err(error) = timed_cron_task(
                 "instance_activity_cache",

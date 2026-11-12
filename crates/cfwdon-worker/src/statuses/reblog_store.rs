@@ -1,4 +1,4 @@
-use super::local_status_target_uri;
+use super::{local_status_target_uri, notified_account_binding};
 use crate::db_utils::d1_results;
 use crate::notifications::publish_local_status_interaction_notification_soft;
 use crate::push::send_push_notification;
@@ -44,6 +44,7 @@ pub(crate) async fn upsert_reblog_local_status(
             Some(value) => D1Type::Text(value),
             None => D1Type::Null,
         },
+        notified_account_binding(status, account_id),
     ];
 
     db.prepare(
@@ -54,6 +55,7 @@ pub(crate) async fn upsert_reblog_local_status(
             target_uri,
             visibility,
             ap_activity_id,
+            notified_account_id,
             created_at,
             updated_at
         ) VALUES (
@@ -63,6 +65,7 @@ pub(crate) async fn upsert_reblog_local_status(
             ?3,
             ?4,
             ?5,
+            ?6,
             CURRENT_TIMESTAMP,
             CURRENT_TIMESTAMP
         )
@@ -71,6 +74,7 @@ pub(crate) async fn upsert_reblog_local_status(
             remote_status_id = NULL,
             visibility = excluded.visibility,
             ap_activity_id = COALESCE(excluded.ap_activity_id, reblogs.ap_activity_id),
+            notified_account_id = excluded.notified_account_id,
             updated_at = CURRENT_TIMESTAMP",
     )
     .bind_refs(bindings.iter())?
@@ -150,6 +154,7 @@ pub(crate) async fn upsert_reblog_remote_status(
             remote_status_id = excluded.remote_status_id,
             visibility = excluded.visibility,
             ap_activity_id = excluded.ap_activity_id,
+            notified_account_id = NULL,
             updated_at = CURRENT_TIMESTAMP",
     )
     .bind_refs(bindings.iter())?

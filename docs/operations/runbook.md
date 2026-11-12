@@ -175,7 +175,7 @@ The same lists are in the admin UI (`/admin`) and at `GET /api/cfwdon/admin/deli
 
 ### Cron Health
 
-Two triggers: `17 * * * *` runs hourly maintenance (queue kick, remote collection approval revalidation, expired polls, due scheduled statuses, stale job and inbox reclaim, background jobs, mute and idempotency-key purge, remote content purge, federation retention, instance activity and public timeline caches, then the stored media backfill). `17 */6 * * *` refreshes trending tags and statuses. A step that fails logs a `console_error` and the rest still run. With the Analytics Engine binding, `cron.task` gives per-step durations; without it, use the invocation duration in the Workers dashboard. An unknown cron string logs `scheduled: unknown cron trigger` and does nothing, so check that `wrangler.toml` and the constants in `lib.rs` agree after changing a schedule.
+Two triggers: `17 * * * *` runs hourly maintenance (queue kick, remote collection approval revalidation, expired polls, due scheduled statuses, stale job and inbox reclaim, background jobs, mute and idempotency-key purge, remote content purge, federation retention, the status mentions backfill, instance activity and public timeline caches, then the stored media backfill). `17 */6 * * *` refreshes trending tags and statuses. A step that fails logs a `console_error` and the rest still run. With the Analytics Engine binding, `cron.task` gives per-step durations; without it, use the invocation duration in the Workers dashboard. An unknown cron string logs `scheduled: unknown cron trigger` and does nothing, so check that `wrangler.toml` and the constants in `lib.rs` agree after changing a schedule.
 
 ### D1
 

@@ -269,6 +269,183 @@ def assert_remote_purge_slices(conn: sqlite3.Connection) -> None:
         raise RuntimeError(f"remote purge slice scans remote_statuses:\n{plan}")
 
 
+NOTIFICATIONS_DIR = REPO_ROOT / "crates" / "cfwdon-worker" / "src" / "notifications"
+STATUS_INSERT_RS = REPO_ROOT / "crates" / "cfwdon-worker" / "src" / "statuses" / "status_insert.rs"
+REMOTE_UPSERT_SQL_RS = (
+    REPO_ROOT / "crates" / "cfwdon-worker" / "src" / "remote" / "store" / "upsert_sql.rs"
+)
+NOTIFICATION_COLLECTOR_RE = re.compile(
+    r'async fn (list_\w+_notifications_for_account)\((?:(?!async fn).)*?'
+    r'\.prepare\(format!\(\s*"(.*?)",\s*bounds\.clause\("([^"]+)",\s*(\d+)\)',
+    re.DOTALL,
+)
+
+
+def notification_collector_sql() -> dict[str, tuple[str, str]]:
+    """Each collector's SQL as written in `notifications/*_store.rs`, with its
+    time-window placeholder filled with and without bounds."""
+    queries: dict[str, tuple[str, str]] = {}
+    for file in sorted(NOTIFICATIONS_DIR.glob("*_store.rs")):
+        for name, sql, column, first in NOTIFICATION_COLLECTOR_RE.findall(file.read_text()):
+            first_param = int(first)
+            bounded = sql.replace(
+                "{}", f" AND {column} >= ?{first_param} AND {column} < ?{first_param + 1}"
+            )
+            queries[name] = (sql.replace("{}", ""), bounded)
+    return queries
+
+
+def assert_notification_queries(conn: sqlite3.Connection) -> None:
+    """Notifications are derived on every read, so each collector must seek the
+    viewer's rows by an index on the notified account, never walk statuses or
+    interactions. Run the real collector SQL and the real insert SQL that
+    records the notified account, and check what each collector returns."""
+    queries = notification_collector_sql()
+    if len(queries) < 15:
+        raise RuntimeError(f"expected every notification collector, found {sorted(queries)}")
+
+    source = STATUS_INSERT_RS.read_text()
+    status_insert = re.search(r'"(INSERT INTO statuses \(.*?quoted_account_id.*?)",', source, re.DOTALL)
+    poll_insert = re.search(r'"(INSERT INTO status_polls \(.*?)",', source, re.DOTALL)
+    remote_upsert = re.search(
+        r'fn remote_status_upsert_sql\(\) -> &\'static str \{\s*"(.*?)"\n\}',
+        REMOTE_UPSERT_SQL_RS.read_text(),
+        re.DOTALL,
+    )
+    if status_insert is None or poll_insert is None or remote_upsert is None:
+        raise RuntimeError("status, poll or remote status insert SQL not found")
+
+    viewer, other = "acct-2", "acct-3"
+    ap = "https://example.com/statuses/"
+
+    def local(status_id: str, account: str, ts: str, quote_of: str | None = None) -> None:
+        conn.execute(
+            status_insert.group(1),
+            (status_id, account, ap + status_id, None, None, quote_of, "<p>x</p>", "x", "",
+             "public", 0, None, "public", "accepted", None, None, None, ts),
+        )
+
+    local("n-own", viewer, "2026-03-01T00:00:00Z")
+    local("n-quote", other, "2026-03-01T00:01:00Z", ap + "n-own")
+    local("n-self-quote", viewer, "2026-03-01T00:02:00Z", ap + "n-own")
+    local("n-quoting-remote", viewer, "2026-03-01T00:03:00Z", "https://remote.example/statuses/q")
+    remote_params = [
+        "n-rquote", "https://remote.example/users/bob", "https://remote.example/statuses/n-rquote",
+        None, None, ap + "n-own", "<p>x</p>", "x", "", "public", 0, None, "accepted",
+        "2026-03-01T00:04:00Z", "{}", "2026-03-01T00:04:00Z", None, None, "[]", None,
+    ]
+    conn.execute(remote_upsert.group(1), remote_params)
+    conn.execute(
+        "UPDATE remote_statuses SET edited_at = '2026-03-02T00:00:00Z' WHERE id = 'rs-3'"
+    )
+    conn.execute(
+        "UPDATE statuses SET quote_of_uri = 'https://remote.example/statuses/3' WHERE id = 'n-quoting-remote'"
+    )
+    recorded = dict(conn.execute(
+        "SELECT id, quoted_account_id FROM statuses WHERE id LIKE 'n-%' "
+        "UNION ALL SELECT id, quoted_account_id FROM remote_statuses WHERE id = 'n-rquote'"
+    ))
+    if recorded != {"n-own": None, "n-quote": viewer, "n-self-quote": None,
+                    "n-quoting-remote": None, "n-rquote": viewer}:
+        raise RuntimeError(f"quoted_account_id recorded at insert: got {recorded}")
+
+    conn.execute(
+        """INSERT INTO status_mentions (status_id, mention_key, account_id, username, acct, url, created_at)
+           VALUES ('n-quote', 'user2', ?1, 'user2', 'user2', 'u', '2026-03-01T00:01:00Z'),
+                  ('n-self-quote', 'user2', ?1, 'user2', 'user2', 'u', '2026-03-01T00:02:00Z')""",
+        (viewer,),
+    )
+    for table, actor_column, actor in (
+        ("favourites", "account_id", other),
+        ("reblogs", "account_id", other),
+        ("remote_favourites", "remote_actor_uri", "https://remote.example/users/bob"),
+        ("remote_reblogs", "remote_actor_uri", "https://remote.example/users/bob"),
+    ):
+        conn.execute(
+            f"""INSERT INTO {table} ({actor_column}, status_id, target_uri, notified_account_id, created_at)
+                VALUES (?, 'n-own', ?, ?, '2026-03-01 00:05:00')""",
+            (actor, ap + "n-own", viewer),
+        )
+    conn.execute(
+        """INSERT INTO favourites (account_id, status_id, target_uri, notified_account_id, created_at)
+           VALUES (?, 'n-own', 'self', NULL, '2026-03-01 00:06:00')""",
+        (viewer,),
+    )
+    conn.execute(poll_insert.group(1), ("poll-own", "n-own", 0, 0, "2026-03-02T00:00:00Z",
+                                        "2026-03-01T00:00:00Z"))
+    conn.execute(poll_insert.group(1), ("poll-voted", "status-1", 1, 0, "2026-03-02T00:00:00Z",
+                                        "2026-03-01T00:00:00Z"))
+    conn.execute(poll_insert.group(1), ("poll-other", "n-quote", 0, 0, "2026-03-02T00:00:00Z",
+                                        "2026-03-01T00:00:00Z"))
+    for position in (0, 1):
+        conn.execute(
+            """INSERT INTO status_poll_options (id, poll_id, title, position)
+               VALUES (?, 'poll-voted', 'option', ?)""",
+            (f"option-{position}", position),
+        )
+        conn.execute(
+            """INSERT INTO status_poll_votes (id, poll_id, account_id, option_position)
+               VALUES (?, 'poll-voted', ?, ?)""",
+            (f"vote-{position}", viewer, position),
+        )
+    authors = dict(conn.execute("SELECT id, account_id FROM status_polls"))
+    if authors != {"poll-own": viewer, "poll-voted": "acct-1", "poll-other": other}:
+        raise RuntimeError(f"status_polls.account_id recorded at insert: got {authors}")
+
+    expected = {
+        "list_favourite_notifications_for_account": [(other, "n-own")],
+        "list_reblog_notifications_for_account": [(other, "n-own")],
+        "list_remote_favourite_notifications_for_account": [
+            ("https://remote.example/users/bob", "n-own")
+        ],
+        "list_remote_reblog_notifications_for_account": [
+            ("https://remote.example/users/bob", "n-own")
+        ],
+        "list_local_mention_notifications_for_account": [("n-quote",)],
+        "list_local_quote_notifications_for_account": [("n-quote",)],
+        "list_remote_quote_notifications_for_account": [("n-rquote",)],
+        "list_quoted_update_notifications_for_account": [("n-quoting-remote",)],
+        "list_poll_notifications_for_account": [("poll-own",), ("poll-voted",)],
+    }
+    # The index each collector must drive from: an index on the notified
+    # account, not on the viewer's own statuses (a walk of their history).
+    driving_index = {
+        "list_favourite_notifications_for_account": "idx_favourites_notified_created",
+        "list_reblog_notifications_for_account": "idx_reblogs_notified_created",
+        "list_remote_favourite_notifications_for_account": "idx_remote_favourites_notified_created",
+        "list_remote_reblog_notifications_for_account": "idx_remote_reblogs_notified_created",
+        "list_local_mention_notifications_for_account": "idx_status_mentions_account_created",
+        "list_local_quote_notifications_for_account": "idx_statuses_quoted_account_created",
+        "list_remote_quote_notifications_for_account": "idx_remote_statuses_quoted_account_published",
+        "list_quoted_update_notifications_for_account": "idx_statuses_account_quoting",
+        "list_poll_notifications_for_account": "idx_status_polls_account_expires",
+        "list_remote_follow_notifications_for_account": "idx_followers_account_created",
+    }
+    # A month either side: the bound sorts the same against `YYYY-MM-DD HH:MM:SS`
+    # and ISO timestamps, so one window serves both stored formats.
+    window = ("2026-02-01T00:00:00", "2026-04-01T00:00:00")
+    for name, (sql, bounded) in queries.items():
+        for variant, params in (("unbounded", (viewer, 20)), ("bounded", (viewer, 20) + window)):
+            text = sql if variant == "unbounded" else bounded
+            try:
+                plan = plan_text(conn, text, params)
+            except sqlite3.Error as error:
+                raise RuntimeError(f"{name} ({variant}): {error}") from error
+            scans = [line for line in plan.splitlines() if "SCAN " in line]
+            if scans:
+                raise RuntimeError(f"{name} ({variant}): expected index seeks, got:\n{plan}")
+            if name in driving_index and driving_index[name] not in plan:
+                raise RuntimeError(
+                    f"{name} ({variant}): expected a seek on {driving_index[name]}, got:\n{plan}"
+                )
+            if name in expected:
+                rows = [tuple(row[: len(expected[name][0])]) for row in conn.execute(text, params)]
+                if name == "list_poll_notifications_for_account":
+                    rows = sorted(rows)
+                if rows != expected[name]:
+                    raise RuntimeError(f"{name} ({variant}): got {rows}, expected {expected[name]}")
+
+
 def seed(conn: sqlite3.Connection) -> None:
     conn.execute(
         "INSERT INTO accounts (id, username, access_email, display_name) VALUES (?, ?, ?, ?)",
@@ -683,6 +860,7 @@ def main() -> int:
             assert_retention_prunes_seek_age(conn)
             assert_thread_queries(conn)
             assert_remote_purge_slices(conn)
+            assert_notification_queries(conn)
     except RuntimeError as error:
         print(f"query plan check failed: {error}", file=sys.stderr)
         return 1

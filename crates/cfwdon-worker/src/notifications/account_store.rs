@@ -185,11 +185,7 @@ pub(crate) async fn list_favourite_notifications_for_account(
         .prepare(format!(
             "SELECT f.account_id, f.status_id, f.created_at
              FROM favourites f
-             JOIN statuses s
-               ON s.id = f.status_id
-             WHERE s.account_id = ?1
-               AND f.account_id != ?1
-               AND f.status_id IS NOT NULL{}
+             WHERE f.notified_account_id = ?1{}
              ORDER BY f.created_at DESC
              LIMIT ?2",
             bounds.clause("f.created_at", 3)
@@ -214,9 +210,7 @@ pub(crate) async fn list_remote_favourite_notifications_for_account(
         .prepare(format!(
             "SELECT rf.remote_actor_uri, rf.status_id, rf.created_at
              FROM remote_favourites rf
-             JOIN statuses s
-               ON s.id = rf.status_id
-             WHERE s.account_id = ?1{}
+             WHERE rf.notified_account_id = ?1{}
              ORDER BY rf.created_at DESC
              LIMIT ?2",
             bounds.clause("rf.created_at", 3)
@@ -241,9 +235,7 @@ pub(crate) async fn list_remote_reblog_notifications_for_account(
         .prepare(format!(
             "SELECT rr.remote_actor_uri, rr.status_id, rr.created_at
              FROM remote_reblogs rr
-             JOIN statuses s
-               ON s.id = rr.status_id
-             WHERE s.account_id = ?1{}
+             WHERE rr.notified_account_id = ?1{}
              ORDER BY rr.created_at DESC
              LIMIT ?2",
             bounds.clause("rr.created_at", 3)
