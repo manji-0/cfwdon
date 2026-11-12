@@ -475,6 +475,30 @@ pub(crate) async fn list_direct_remote_replies_by_uris(
     query_remote_statuses_with_actor(db, &sql, &[D1Type::Text(&uris)]).await
 }
 
+/// Every remote status in the reply tree below a local root (see
+/// [`super::LOCAL_REPLY_TREE_CTE`]), oldest first.
+pub(crate) async fn list_remote_reply_tree(
+    db: &D1Database,
+    root_id: &str,
+    root_uri: &str,
+    actor_url_prefix: &str,
+    max_depth: u32,
+) -> Result<Vec<(RemoteStatus, RemoteActorRow)>> {
+    let bindings = super::local_reply_tree_bindings(root_id, root_uri, actor_url_prefix, max_depth);
+    let sql = format!(
+        "{}
+         SELECT
+            {REMOTE_STATUS_WITH_ACTOR_SELECT}
+         FROM remote_statuses rs
+         JOIN remote_actors ra ON ra.actor_uri = rs.actor_uri
+         LEFT JOIN remote_status_counts rsc ON rsc.remote_status_id = rs.id
+         WHERE rs.id IN (SELECT id FROM reply_tree WHERE kind = 'remote')
+         ORDER BY rs.published_at ASC",
+        super::LOCAL_REPLY_TREE_CTE
+    );
+    query_remote_statuses_with_actor(db, &sql, &bindings).await
+}
+
 pub(crate) async fn list_remote_direct_statuses_mentioning_viewer(
     db: &D1Database,
     mention_pattern: &str,

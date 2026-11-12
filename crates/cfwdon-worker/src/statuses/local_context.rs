@@ -1,6 +1,6 @@
 use super::{
-    LocalAccount, can_view_local_status, list_direct_local_replies_to_ids,
-    list_direct_remote_replies_by_uris, list_local_reply_chain,
+    LocalAccount, can_view_local_status, list_local_reply_chain, list_local_reply_tree,
+    list_remote_reply_tree,
 };
 use crate::accounts::find_accounts_by_ids;
 use crate::activitypub::is_public_activitypub_visibility;
@@ -57,6 +57,9 @@ struct RemoteContextQueueNode {
 /// How far up a reply chain the ancestor query follows; ancestors are trimmed
 /// further for the response.
 const MAX_CONTEXT_ANCESTOR_DEPTH: u32 = 256;
+
+/// How far down the reply tree query follows when the viewer has no depth limit.
+const MAX_CONTEXT_DESCENDANT_DEPTH: u32 = 256;
 
 fn unique_account_ids(statuses: &[LocalStatus]) -> Vec<String> {
     let mut seen = HashSet::new();
@@ -146,8 +149,9 @@ pub(crate) async fn build_local_status_context(
     render_context_response(db, config, viewer, ancestors, descendants).await
 }
 
-/// Walks the reply tree a level at a time: each level's local and remote
-/// replies are one query each, whatever the number of nodes.
+/// Loads the whole reply tree in one round (one recursive query per status
+/// kind), then walks it a level at a time in memory so a hidden status also
+/// hides its replies.
 async fn collect_descendants_for_local_root(
     db: &D1Database,
     config: &AppConfig,
@@ -156,6 +160,31 @@ async fn collect_descendants_for_local_root(
     root_uri: &str,
 ) -> Result<Vec<StatusRenderItem>> {
     let max_depth = context_descendant_max_depth(viewer.is_some());
+    let tree_depth = max_depth
+        .and_then(|depth| u32::try_from(depth).ok())
+        .unwrap_or(MAX_CONTEXT_DESCENDANT_DEPTH);
+    let actor_url_prefix = actor_url(config, "");
+    let (local_tree, remote_tree) = futures_util::try_join!(
+        list_local_reply_tree(db, &root.id, root_uri, &actor_url_prefix, tree_depth),
+        list_remote_reply_tree(db, &root.id, root_uri, &actor_url_prefix, tree_depth),
+    )?;
+    let owners = find_accounts_by_ids(db, &unique_account_ids(&local_tree)).await?;
+    let mut local_children = HashMap::<String, Vec<LocalStatus>>::new();
+    for status in local_tree {
+        if let Some(parent_id) = status.in_reply_to_id.clone() {
+            local_children.entry(parent_id).or_default().push(status);
+        }
+    }
+    let mut remote_children = HashMap::<String, Vec<_>>::new();
+    for (status, actor) in remote_tree {
+        if let Some(parent_uri) = status.in_reply_to_uri.clone() {
+            remote_children
+                .entry(parent_uri)
+                .or_default()
+                .push((status, actor));
+        }
+    }
+
     let mut descendants = Vec::new();
     let mut local_level = vec![LocalContextQueueNode {
         status_id: root.id.clone(),
@@ -180,13 +209,16 @@ async fn collect_descendants_for_local_root(
                     .map(|node| (node.object_uri.clone(), node.depth)),
             )
             .collect::<HashMap<_, _>>();
-        let local_parent_ids = local_parent_depths.keys().cloned().collect::<Vec<_>>();
-        let parent_uris = uri_parent_depths.keys().cloned().collect::<Vec<_>>();
-        let (local_replies, remote_replies) = futures_util::try_join!(
-            list_direct_local_replies_to_ids(db, &local_parent_ids),
-            list_direct_remote_replies_by_uris(db, &parent_uris),
-        )?;
-        let owners = find_accounts_by_ids(db, &unique_account_ids(&local_replies)).await?;
+        let local_replies = local_parent_depths
+            .keys()
+            .filter_map(|parent_id| local_children.remove(parent_id))
+            .flatten()
+            .collect::<Vec<_>>();
+        let remote_replies = uri_parent_depths
+            .keys()
+            .filter_map(|parent_uri| remote_children.remove(parent_uri))
+            .flatten()
+            .collect::<Vec<_>>();
 
         let mut next_local_level = Vec::new();
         for status in local_replies {

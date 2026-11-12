@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import re
 import sqlite3
 import sys
 from pathlib import Path
@@ -119,6 +120,85 @@ def assert_no_null_cursor_disjunction(_plan: str, sql: str, label: str) -> None:
 
     if re.search(r"\?\d+\s+IS NULL", sql):
         raise RuntimeError(f"{label}: query still uses nullable cursor disjunctions")
+
+
+STORE_LOCAL_RS = (
+    REPO_ROOT / "crates" / "cfwdon-worker" / "src" / "statuses" / "store_local.rs"
+)
+
+
+def rust_str_const(source: str, name: str) -> str:
+    match = re.search(rf'const {name}: &str = "(.*?)";', source, re.DOTALL)
+    if match is None:
+        raise RuntimeError(f"{name} not found in {STORE_LOCAL_RS}")
+    return match.group(1)
+
+
+def assert_thread_queries(conn: sqlite3.Connection) -> None:
+    """Run the thread context SQL as written in `store_local.rs` (not a copy)
+    on a mixed local/remote thread, so a broken query fails here, not as a 500."""
+    source = STORE_LOCAL_RS.read_text()
+    columns = rust_str_const(source, "LOCAL_REPLY_COLUMNS")
+    tree_cte = rust_str_const(source, "LOCAL_REPLY_TREE_CTE")
+    chain = re.search(r'"(WITH RECURSIVE chain.*?)"\n', source, re.DOTALL)
+    if chain is None:
+        raise RuntimeError("ancestor chain query not found in store_local.rs")
+    chain_sql = chain.group(1).replace("{LOCAL_REPLY_COLUMNS}", columns)
+
+    def local(status_id: str, parent: str | None, ts: str) -> None:
+        conn.execute(
+            """INSERT INTO statuses (
+                id, account_id, in_reply_to_id, content_html, text_content, visibility,
+                quote_approval_policy, quote_state, created_at
+             ) VALUES (?, 'acct-1', ?, '<p>x</p>', 'x', 'public', 'public', 'accepted', ?)""",
+            (status_id, parent, ts),
+        )
+
+    def remote(status_id: str, parent_uri: str, ts: str) -> None:
+        conn.execute(
+            """INSERT INTO remote_statuses (
+                id, actor_uri, object_uri, url, in_reply_to_uri, content_html,
+                visibility, published_at, raw_object_json
+             ) VALUES (?, 'https://remote.example/users/bob', ?, ?, ?, '<p>x</p>',
+                       'public', ?, '{}')""",
+            (status_id, f"https://remote.example/{status_id}", None, parent_uri, ts),
+        )
+
+    local("thread-root", None, "2026-03-01T00:00:00Z")
+    local("thread-1", "thread-root", "2026-03-01T00:01:00Z")
+    local("thread-2", "thread-1", "2026-03-01T00:02:00Z")
+    remote("thread-r1", "https://example.com/users/alice/statuses/thread-1", "2026-03-01T00:03:00Z")
+    remote("thread-r2", "https://remote.example/thread-r1", "2026-03-01T00:04:00Z")
+    local("thread-other", None, "2026-03-01T00:05:00Z")
+
+    ancestors = [row[0] for row in conn.execute(chain_sql, ("thread-2", 256))]
+    if ancestors != ["thread-2", "thread-1", "thread-root"]:
+        raise RuntimeError(f"ancestor chain: got {ancestors}")
+
+    tree_params = ("thread-root", "https://example.com/statuses/thread-root",
+                   "https://example.com/users/", 256)
+    tree = sorted(
+        conn.execute(f"{tree_cte} SELECT kind, id FROM reply_tree WHERE depth > 0", tree_params)
+    )
+    expected = [("local", "thread-1"), ("local", "thread-2"),
+                ("remote", "thread-r1"), ("remote", "thread-r2")]
+    if tree != expected:
+        raise RuntimeError(f"reply tree: got {tree}")
+    shallow = sorted(
+        conn.execute(
+            f"{tree_cte} SELECT id FROM reply_tree WHERE depth > 0", tree_params[:3] + (1,)
+        )
+    )
+    if shallow != [("thread-1",)]:
+        raise RuntimeError(f"reply tree depth cap: got {shallow}")
+    for label, sql in (
+        ("ancestor chain", chain_sql),
+        ("reply tree", f"{tree_cte} SELECT id FROM reply_tree"),
+    ):
+        params = ("thread-2", 256) if label == "ancestor chain" else tree_params
+        plan = plan_text(conn, sql, params)
+        if "SCAN s " in plan or "SCAN rs " in plan or "SCAN statuses" in plan:
+            raise RuntimeError(f"{label}: expected index seeks, got:\n{plan}")
 
 
 def seed(conn: sqlite3.Connection) -> None:
@@ -533,6 +613,7 @@ def main() -> int:
                 assert_no_null_cursor_disjunction(plan, sql, label)
             assert_remote_home_actor_slices(conn)
             assert_retention_prunes_seek_age(conn)
+            assert_thread_queries(conn)
     except RuntimeError as error:
         print(f"query plan check failed: {error}", file=sys.stderr)
         return 1
