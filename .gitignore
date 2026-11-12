@@ -18,3 +18,4 @@ __pycache__/
 *.py[cod]
 # Added by code-review-graph
 .code-review-graph/
+/wrangler.query-count.toml
