@@ -96,6 +96,42 @@ impl RateLimitBucket {
     fn index(self) -> usize {
         self as usize
     }
+
+    /// Where the bucket's counters are counted. The traffic-volume buckets
+    /// (API requests, federation fetches, inbox deliveries) count in the
+    /// isolate first ([`plan_hits`]); every other bucket guards an action or a
+    /// credential, or spans a window longer than an isolate is likely to live,
+    /// and asks the shared counter on every hit. tstodon's
+    /// `server/rate-limit.ts` keeps the same split.
+    pub fn counting(self) -> RateLimitCounting {
+        match self {
+            Self::ApiIp
+            | Self::ApiToken
+            | Self::ApiAccount
+            | Self::FederationFetch
+            | Self::InboxIp
+            | Self::InboxDomain => RateLimitCounting::LocalFirst,
+            Self::Media
+            | Self::Statuses
+            | Self::Reblogs
+            | Self::Follows
+            | Self::Reports
+            | Self::SignIn
+            | Self::AppRegistration
+            | Self::OauthToken
+            | Self::RemoteLookup => RateLimitCounting::Exact,
+        }
+    }
+}
+
+/// Whether a counter may be counted in the isolate before the shared counter
+/// (the `RateLimitCounter` Durable Object) is asked.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RateLimitCounting {
+    /// Counted in the isolate while it stays well under its limit; see [`plan_hits`].
+    LocalFirst,
+    /// Every hit goes to the shared counter.
+    Exact,
 }
 
 /// One bucket's limit, or none.
@@ -187,6 +223,7 @@ impl RateLimitPolicy {
                 name,
                 limit,
                 period_ms: u64::from(period_seconds) * 1000,
+                counting: bucket.counting(),
             }),
             RateLimitRule::Unlimited => None,
         }
@@ -247,6 +284,16 @@ pub struct RateLimitHit {
     pub name: String,
     pub limit: u32,
     pub period_ms: u64,
+    pub counting: RateLimitCounting,
+}
+
+/// What an isolate sends the shared counter for one counter: the hit, and how
+/// many hits it stands for (this one and those the isolate counted locally
+/// since it last asked).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RateLimitIncrement {
+    pub hit: RateLimitHit,
+    pub by: u32,
 }
 
 /// The counters a request increments under one subject.
@@ -562,26 +609,27 @@ fn window_start_ms(now_ms: u64, period_ms: u64) -> u64 {
     now_ms - now_ms % period_ms.max(1)
 }
 
-/// Count `hits` at `now_ms`: each counter in its current window goes up by
-/// one, a counter whose window has passed starts again at one, and windows
-/// that have ended are dropped from the table. Returns each counter's state
-/// after the hit, in the order of `hits`.
+/// Count `increments` at `now_ms`: each counter in its current window goes up
+/// by the increment, a counter whose window has passed starts again from it,
+/// and windows that have ended are dropped from the table. Returns each
+/// counter's state after the hit, in the order of `increments`.
 pub fn count_hits(
     table: &mut RateLimitCounterTable,
-    hits: &[RateLimitHit],
+    increments: &[RateLimitIncrement],
     now_ms: u64,
 ) -> Vec<RateLimitCounterState> {
     table.retain(|_, stored| stored.end_ms() > now_ms);
-    hits.iter()
-        .map(|hit| {
+    increments
+        .iter()
+        .map(|RateLimitIncrement { hit, by }| {
             let start_ms = window_start_ms(now_ms, hit.period_ms);
             let count = match table.get(&hit.name) {
                 Some(stored)
                     if stored.start_ms == start_ms && stored.period_ms == hit.period_ms =>
                 {
-                    stored.count.saturating_add(1)
+                    stored.count.saturating_add(*by)
                 }
-                _ => 1,
+                _ => *by,
             };
             let stored = StoredCounter {
                 start_ms,
@@ -603,6 +651,128 @@ pub fn count_hits(
 /// When the last window in `table` ends, or `None` for an empty table.
 pub fn table_expires_at_ms(table: &RateLimitCounterTable) -> Option<u64> {
     table.values().map(StoredCounter::end_ms).max()
+}
+
+/// One counter as one isolate has seen it in the current window.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct LocalCounter {
+    start_ms: u64,
+    period_ms: u64,
+    /// Hits this isolate counted.
+    seen: u32,
+    /// Of those, the hits not yet sent to the shared counter.
+    unsent: u32,
+    /// The count the shared counter last answered, every isolate's hits included.
+    shared: u32,
+}
+
+impl LocalCounter {
+    /// The counter in the window `now_ms` is in, started afresh if its window passed.
+    fn current(&self, hit: &RateLimitHit, now_ms: u64) -> Self {
+        let start_ms = window_start_ms(now_ms, hit.period_ms);
+        if self.start_ms == start_ms && self.period_ms == hit.period_ms {
+            self.clone()
+        } else {
+            Self {
+                start_ms,
+                period_ms: hit.period_ms,
+                ..Self::default()
+            }
+        }
+    }
+
+    /// The best count this isolate knows of.
+    fn estimate(&self) -> u32 {
+        self.seen.max(self.shared.saturating_add(self.unsent))
+    }
+
+    fn state(&self, hit: &RateLimitHit, count: u32) -> RateLimitCounterState {
+        RateLimitCounterState {
+            name: hit.name.clone(),
+            limit: hit.limit,
+            count,
+            reset_at_ms: self.start_ms.saturating_add(self.period_ms),
+        }
+    }
+
+    /// Whether one more hit may be counted here without asking: a local-first
+    /// counter may grow by a quarter of the headroom the shared counter last
+    /// left (a quarter of the limit before it was asked). Near the limit the
+    /// quarter rounds to nothing, so the shared counter decides every hit there.
+    fn may_count_locally(&self, hit: &RateLimitHit) -> bool {
+        let headroom = hit.limit.saturating_sub(self.shared);
+        hit.counting == RateLimitCounting::LocalFirst
+            && self.estimate() < self.shared.saturating_add(headroom / 4)
+    }
+
+    /// What the shared counter answered for this counter.
+    pub fn record_shared(&mut self, state: &RateLimitCounterState) {
+        if self.start_ms.saturating_add(self.period_ms) == state.reset_at_ms {
+            self.shared = self.shared.max(state.count);
+        }
+    }
+}
+
+/// What a check's hits need once the isolate's counters have seen them.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LocalPlan {
+    /// Decided in the isolate: the counters' states after the hit, or the
+    /// counter the shared counter already found over its limit.
+    Answered(Vec<RateLimitCounterState>),
+    /// Ask the shared counter, sending these increments.
+    Ask(Vec<RateLimitIncrement>),
+}
+
+/// Count one subject's `hits` in the isolate's `counters` (one per hit, in
+/// order; a default counter for one not seen yet), or decide to ask the
+/// shared counter.
+///
+/// A counter the shared counter found over its limit refuses until its window
+/// ends without asking again. When every hit may still be counted locally
+/// ([`LocalCounter::may_count_locally`]), the request costs no call;
+/// otherwise the call carries every hit counted locally since the last one,
+/// so the shared count misses only what isolates that never asked counted,
+/// each under a quarter of its limit.
+pub fn plan_hits(counters: &mut [LocalCounter], hits: &[RateLimitHit], now_ms: u64) -> LocalPlan {
+    for (counter, hit) in counters.iter_mut().zip(hits) {
+        *counter = counter.current(hit, now_ms);
+    }
+    if let Some((counter, hit)) = counters
+        .iter()
+        .zip(hits)
+        .find(|(counter, hit)| counter.shared > hit.limit)
+    {
+        return LocalPlan::Answered(vec![counter.state(hit, counter.shared)]);
+    }
+    let local = counters
+        .iter()
+        .zip(hits)
+        .all(|(counter, hit)| counter.may_count_locally(hit));
+    let pairs = counters.iter_mut().zip(hits);
+    if local {
+        LocalPlan::Answered(
+            pairs
+                .map(|(counter, hit)| {
+                    counter.seen += 1;
+                    counter.unsent += 1;
+                    counter.state(hit, counter.estimate())
+                })
+                .collect(),
+        )
+    } else {
+        LocalPlan::Ask(
+            pairs
+                .map(|(counter, hit)| {
+                    counter.seen = counter.seen.saturating_add(1);
+                    let by = std::mem::take(&mut counter.unsent) + 1;
+                    RateLimitIncrement {
+                        hit: hit.clone(),
+                        by,
+                    }
+                })
+                .collect(),
+        )
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -849,7 +1019,8 @@ mod tests {
             vec![RateLimitHit {
                 name: "api_ip".to_owned(),
                 limit: 600,
-                period_ms: 60_000
+                period_ms: 60_000,
+                counting: RateLimitCounting::LocalFirst,
             }]
         );
         assert_eq!(
@@ -1006,29 +1177,30 @@ mod tests {
             name: name.to_owned(),
             limit,
             period_ms,
+            counting: RateLimitCounting::LocalFirst,
         }
+    }
+
+    fn once(hit: RateLimitHit) -> RateLimitIncrement {
+        RateLimitIncrement { hit, by: 1 }
     }
 
     #[test]
     fn counts_within_an_epoch_aligned_window_and_restarts_in_the_next() {
         let mut table = RateLimitCounterTable::new();
         let five_minutes = hit("api_ip", 2, 300_000);
-        let first = count_hits(
-            &mut table,
-            std::slice::from_ref(&five_minutes),
-            START_MS + 10,
-        );
+        let first = count_hits(&mut table, &[once(five_minutes.clone())], START_MS + 10);
         assert_eq!(first[0].count, 1);
         assert_eq!(first[0].reset_at_ms, START_MS + 300_000);
         let second = count_hits(
             &mut table,
-            std::slice::from_ref(&five_minutes),
+            &[once(five_minutes.clone())],
             START_MS + 299_999,
         );
         assert_eq!(second[0].count, 2);
         let next_window = count_hits(
             &mut table,
-            std::slice::from_ref(&five_minutes),
+            &[once(five_minutes.clone())],
             START_MS + 300_000,
         );
         assert_eq!(next_window[0].count, 1);
@@ -1041,15 +1213,15 @@ mod tests {
         count_hits(
             &mut table,
             &[
-                hit("api_account", 10, 300_000),
-                hit("follows", 10, 86_400_000),
+                once(hit("api_account", 10, 300_000)),
+                once(hit("follows", 10, 86_400_000)),
             ],
             START_MS,
         );
         assert_eq!(table_expires_at_ms(&table), Some(START_MS + 86_400_000));
         let states = count_hits(
             &mut table,
-            &[hit("follows", 10, 86_400_000)],
+            &[once(hit("follows", 10, 86_400_000))],
             START_MS + 400_000,
         );
         assert_eq!(states[0].count, 2);
@@ -1062,9 +1234,134 @@ mod tests {
     #[test]
     fn restarts_a_counter_whose_window_length_changed() {
         let mut table = RateLimitCounterTable::new();
-        count_hits(&mut table, &[hit("api_ip", 10, 300_000)], START_MS);
-        let states = count_hits(&mut table, &[hit("api_ip", 10, 60_000)], START_MS + 1);
+        count_hits(&mut table, &[once(hit("api_ip", 10, 300_000))], START_MS);
+        let states = count_hits(&mut table, &[once(hit("api_ip", 10, 60_000))], START_MS + 1);
         assert_eq!(states[0].count, 1);
+    }
+
+    /// Isolates counting one subject's hits against a shared counter table,
+    /// as the worker and the `RateLimitCounter` Durable Object do.
+    struct Deployment {
+        isolates: Vec<Vec<LocalCounter>>,
+        shared: RateLimitCounterTable,
+        asks: usize,
+    }
+
+    impl Deployment {
+        fn new(isolates: usize) -> Self {
+            Self {
+                isolates: vec![Vec::new(); isolates],
+                shared: RateLimitCounterTable::new(),
+                asks: 0,
+            }
+        }
+
+        /// One request through `isolate`: whether it was allowed.
+        fn request(&mut self, isolate: usize, hits: &[RateLimitHit], now_ms: u64) -> bool {
+            let counters = &mut self.isolates[isolate];
+            counters.resize(hits.len(), LocalCounter::default());
+            let states = match plan_hits(counters, hits, now_ms) {
+                LocalPlan::Answered(states) => states,
+                LocalPlan::Ask(increments) => {
+                    self.asks += 1;
+                    let states = count_hits(&mut self.shared, &increments, now_ms);
+                    for (counter, state) in counters.iter_mut().zip(&states) {
+                        counter.record_shared(state);
+                    }
+                    states
+                }
+            };
+            matches!(
+                rate_limit_verdict(&states, now_ms),
+                RateLimitVerdict::Allowed { .. }
+            )
+        }
+    }
+
+    #[test]
+    fn counts_volume_buckets_locally_until_a_quarter_of_the_limit() {
+        let api = [hit("api_ip", 300, 300_000)];
+        let mut counters = vec![LocalCounter::default()];
+        for expected in 1..=75 {
+            match plan_hits(&mut counters, &api, START_MS) {
+                LocalPlan::Answered(states) => {
+                    assert_eq!(
+                        states,
+                        vec![state("api_ip", 300, expected, START_MS + 300_000)]
+                    );
+                }
+                LocalPlan::Ask(_) => panic!("hit {expected} asked the shared counter"),
+            }
+        }
+        assert_eq!(
+            plan_hits(&mut counters, &api, START_MS),
+            LocalPlan::Ask(vec![RateLimitIncrement {
+                hit: api[0].clone(),
+                by: 76
+            }])
+        );
+    }
+
+    #[test]
+    fn exact_buckets_and_mixed_checks_ask_on_every_hit() {
+        let policy = RateLimitPolicy::mastodon_defaults();
+        let caller = RateLimitCaller::Account {
+            account_id: "a".to_owned(),
+            token_id: "t".to_owned(),
+        };
+        let post = rate_limit_checks(&policy, &request("POST", "/api/v1/statuses", None, &caller));
+        let hits = &post[0].hits;
+        let mut counters = vec![LocalCounter::default(); hits.len()];
+        let LocalPlan::Ask(increments) = plan_hits(&mut counters, hits, START_MS) else {
+            panic!("a status post was counted locally");
+        };
+        assert!(increments.iter().all(|increment| increment.by == 1));
+        let read = rate_limit_checks(
+            &policy,
+            &request("GET", "/api/v1/timelines/home", None, &caller),
+        );
+        assert!(matches!(
+            plan_hits(&mut counters[..2], &read[0].hits, START_MS),
+            LocalPlan::Answered(_)
+        ));
+    }
+
+    #[test]
+    fn a_client_at_half_its_limit_asks_twice_a_window() {
+        let api = [hit("api_token:t", 300, 300_000)];
+        let mut deployment = Deployment::new(1);
+        for request in 0..150 {
+            assert!(deployment.request(0, &api, START_MS + request));
+        }
+        // At 76 (past a quarter of 300), then at 133 (past 76 and a quarter of the 224 left).
+        assert_eq!(deployment.asks, 2);
+        assert_eq!(deployment.shared["api_token:t"].count, 133);
+    }
+
+    #[test]
+    fn a_flood_from_one_client_is_limited_at_the_limit() {
+        let api = [hit("api_ip", 300, 300_000)];
+        let mut deployment = Deployment::new(1);
+        let allowed = (0..2000)
+            .filter(|request| deployment.request(0, &api, START_MS + request))
+            .count();
+        assert_eq!(allowed, 300);
+        assert!(deployment.asks < 50, "{} asks", deployment.asks);
+        assert!(deployment.request(0, &api, START_MS + 300_000));
+    }
+
+    #[test]
+    fn a_flood_spread_over_isolates_is_still_limited() {
+        let api = [hit("inbox_ip", 1500, 300_000)];
+        let isolates = 4;
+        let mut deployment = Deployment::new(isolates);
+        let allowed = (0..20_000)
+            .filter(|request| {
+                deployment.request(request % isolates, &api, START_MS + *request as u64)
+            })
+            .count();
+        assert!(allowed >= 1500, "{allowed}");
+        assert!(allowed <= 1500 + (isolates - 1) * 1500 / 4, "{allowed}");
     }
 
     fn state(name: &str, limit: u32, count: u32, reset_at_ms: u64) -> RateLimitCounterState {

@@ -1,6 +1,6 @@
 use super::{
-    D1Database, LocalAccount, can_view_local_status, find_remote_statuses_with_actors_by_ids,
-    find_status_by_id, load_in_reply_to_account_id,
+    D1Database, LocalAccount, QuoteEmbedPreloads, can_view_local_status,
+    find_remote_statuses_with_actors_by_ids, find_status_by_id, load_in_reply_to_account_id,
 };
 use crate::auth::find_account_by_id;
 use crate::identity::remote_account_rest_id;
@@ -77,18 +77,28 @@ pub(crate) async fn load_local_status_response_preload(
     })
 }
 
+/// `embed` carries the owner, media and reply author batch-loaded for boost
+/// and quote targets; without it they are looked up one query at a time.
 pub(crate) async fn resolve_local_status_response_subject(
     db: &D1Database,
     viewer: Option<&LocalAccount>,
     status: LocalStatus,
+    embed: Option<&QuoteEmbedPreloads>,
 ) -> Result<Option<ResolvedLocalStatusResponseSubject>> {
-    let Some(account) = find_account_by_id(db, &status.account_id).await? else {
-        return Ok(None);
+    let (account, preload) = match embed.and_then(|embed| embed.local_subject(&status)) {
+        Some((account, preload)) => (account, Some(preload)),
+        None => match find_account_by_id(db, &status.account_id).await? {
+            Some(account) => (account, None),
+            None => return Ok(None),
+        },
     };
     if !can_view_local_status(db, &status, viewer, &account).await? {
         return Ok(Some(ResolvedLocalStatusResponseSubject::Hidden));
     }
-    let preload = load_local_status_response_preload(db, &status).await?;
+    let preload = match preload {
+        Some(preload) => preload,
+        None => load_local_status_response_preload(db, &status).await?,
+    };
     Ok(Some(ResolvedLocalStatusResponseSubject::Loaded(
         LoadedLocalStatusResponseSubject {
             status,
@@ -103,7 +113,7 @@ pub(crate) async fn load_visible_local_status_response_subject(
     viewer: Option<&LocalAccount>,
     status: LocalStatus,
 ) -> Result<Option<LoadedLocalStatusResponseSubject>> {
-    match resolve_local_status_response_subject(db, viewer, status).await? {
+    match resolve_local_status_response_subject(db, viewer, status, None).await? {
         Some(ResolvedLocalStatusResponseSubject::Loaded(subject)) => Ok(Some(subject)),
         Some(ResolvedLocalStatusResponseSubject::Hidden) | None => Ok(None),
     }

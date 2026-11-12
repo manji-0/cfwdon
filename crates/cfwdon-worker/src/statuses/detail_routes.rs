@@ -222,7 +222,7 @@ async fn load_local_status_api_subject(
     viewer: Option<&cfwdon_domain::LocalAccount>,
     status: LocalStatus,
 ) -> Result<Option<LoadedStatusApiSubject>> {
-    match resolve_local_status_response_subject(db, viewer, status).await? {
+    match resolve_local_status_response_subject(db, viewer, status, None).await? {
         Some(super::ResolvedLocalStatusResponseSubject::Loaded(subject)) => {
             Ok(Some(LoadedStatusApiSubject::Local(subject)))
         }

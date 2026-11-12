@@ -16,7 +16,9 @@ use crate::statuses::{
     load_in_reply_to_account_id, statuses_from_records,
 };
 use crate::store::remote::find_remote_actor_by_actor_uri;
-use crate::stream_hub::publish_notification_stream_hub_event_soft;
+use crate::stream_hub::{
+    notification_stream_open, publish_notification_stream_hub_event_soft, stream_audience,
+};
 use crate::time_html::{now_iso_string, timestamp_to_mastodon_iso8601};
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
@@ -232,7 +234,13 @@ pub(crate) async fn publish_remote_status_create_stream_notifications_soft(
     remote_actor: &RemoteActorProfile,
     remote_status: &RemoteStatus,
 ) {
-    if env.is_none() {
+    let Some(stream_env) = env else {
+        return;
+    };
+    if !stream_audience(stream_env)
+        .await
+        .has_stream("user:notification")
+    {
         return;
     }
 
@@ -253,6 +261,9 @@ pub(crate) async fn publish_remote_status_create_stream_notifications_soft(
                     &remote_id,
                     &remote_status.id,
                 );
+                if !notification_stream_open(stream_env, recipient_account_id).await {
+                    continue;
+                }
                 let status_response = build_remote_status_response_for_recipient_soft(
                     db,
                     config,
@@ -280,6 +291,7 @@ pub(crate) async fn publish_remote_status_create_stream_notifications_soft(
     if let Some(quote_of_uri) = remote_status.quote_of_uri.as_deref()
         && remote_status.effective_quote_state() == QuoteState::Accepted
         && let Ok(Some(target)) = find_local_status_by_object_uri(db, config, quote_of_uri).await
+        && notification_stream_open(stream_env, &target.account_id).await
     {
         let recipient_account_id = &target.account_id;
         let id = remote_status_interaction_notification_id("quote", &remote_id, &remote_status.id);
@@ -316,6 +328,9 @@ pub(crate) async fn publish_remote_status_create_stream_notifications_soft(
         for recipient_account_id in follower_ids {
             let id =
                 remote_status_interaction_notification_id("status", &remote_id, &remote_status.id);
+            if !notification_stream_open(stream_env, &recipient_account_id).await {
+                continue;
+            }
             let status_response = build_remote_status_response_for_recipient_soft(
                 db,
                 config,
@@ -341,6 +356,7 @@ pub(crate) async fn publish_remote_status_create_stream_notifications_soft(
 
     if let Some(in_reply_to_uri) = remote_status.in_reply_to_uri.as_deref()
         && let Ok(Some(parent)) = find_local_status_by_object_uri(db, config, in_reply_to_uri).await
+        && notification_stream_open(stream_env, &parent.account_id).await
     {
         let recipient_account_id = &parent.account_id;
         let id = remote_status_interaction_notification_id("status", &remote_id, &remote_status.id);
@@ -374,7 +390,13 @@ pub(crate) async fn publish_remote_status_update_stream_notifications_soft(
     remote_actor: &RemoteActorProfile,
     remote_status: &RemoteStatus,
 ) {
-    if env.is_none() {
+    let Some(stream_env) = env else {
+        return;
+    };
+    if !stream_audience(stream_env)
+        .await
+        .has_stream("user:notification")
+    {
         return;
     }
 
@@ -393,6 +415,9 @@ pub(crate) async fn publish_remote_status_update_stream_notifications_soft(
         list_reblog_account_ids_for_remote_status(db, &remote_status.id).await
     {
         for recipient_account_id in reblog_accounts {
+            if !notification_stream_open(stream_env, &recipient_account_id).await {
+                continue;
+            }
             let status_response = build_remote_status_response_for_recipient_soft(
                 db,
                 config,
@@ -427,6 +452,9 @@ pub(crate) async fn publish_remote_status_update_stream_notifications_soft(
                     &local_status.id,
                     &update_token,
                 );
+                if !notification_stream_open(stream_env, recipient_account_id).await {
+                    continue;
+                }
                 let status_response = build_local_status_response_for_recipient_soft(
                     db,
                     config,
@@ -498,6 +526,9 @@ async fn publish_notification_response_now(
     recipient_account_id: &str,
     notification: MastodonNotificationResponse,
 ) {
+    if !notification_stream_open(env, recipient_account_id).await {
+        return;
+    }
     match streamed_notification_listed(env, config, recipient_account_id, &notification).await {
         Ok(true) => {}
         Ok(false) => return,
@@ -631,6 +662,9 @@ async fn publish_local_status_interaction_notification_now(
     notification_type: &str,
     status: &LocalStatus,
 ) -> Result<()> {
+    if !notification_stream_open(env, recipient_account_id).await {
+        return Ok(());
+    }
     let id = local_status_interaction_notification_id(notification_type, actor.id(), &status.id);
     let group_key = id.clone();
 
@@ -698,6 +732,12 @@ pub(crate) async fn publish_remote_status_interaction_notification_soft(
     notification_type: &str,
     status: &LocalStatus,
 ) -> Result<()> {
+    let Some(stream_env) = env else {
+        return Ok(());
+    };
+    if !notification_stream_open(stream_env, recipient_account_id).await {
+        return Ok(());
+    }
     let remote_id = remote_account_rest_id(&remote_actor.actor_uri);
     let id = remote_status_interaction_notification_id(notification_type, &remote_id, &status.id);
     let group_key = id.clone();

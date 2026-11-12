@@ -1,4 +1,4 @@
-use super::local_status_target_uri;
+use super::{local_status_target_uri, notified_account_binding};
 use crate::db_utils::d1_results;
 use crate::notifications::publish_local_status_interaction_notification_soft;
 use crate::push::send_push_notification;
@@ -43,6 +43,7 @@ pub(crate) async fn upsert_favourite_local_status(
         D1Type::Text(account_id),
         D1Type::Text(status.id.as_str()),
         D1Type::Text(target_uri.as_str()),
+        notified_account_binding(status, account_id),
     ];
 
     db.prepare(
@@ -52,6 +53,7 @@ pub(crate) async fn upsert_favourite_local_status(
             remote_status_id,
             target_uri,
             ap_activity_id,
+            notified_account_id,
             created_at,
             updated_at
         ) VALUES (
@@ -60,6 +62,7 @@ pub(crate) async fn upsert_favourite_local_status(
             NULL,
             ?3,
             NULL,
+            ?4,
             CURRENT_TIMESTAMP,
             CURRENT_TIMESTAMP
         )
@@ -67,6 +70,7 @@ pub(crate) async fn upsert_favourite_local_status(
             status_id = excluded.status_id,
             remote_status_id = NULL,
             ap_activity_id = NULL,
+            notified_account_id = excluded.notified_account_id,
             updated_at = CURRENT_TIMESTAMP",
     )
     .bind_refs(bindings.iter())?
@@ -137,6 +141,7 @@ pub(crate) async fn upsert_favourite_remote_status(
             status_id = NULL,
             remote_status_id = excluded.remote_status_id,
             ap_activity_id = excluded.ap_activity_id,
+            notified_account_id = NULL,
             updated_at = CURRENT_TIMESTAMP",
     )
     .bind_refs(bindings.iter())?

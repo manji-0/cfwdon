@@ -1,8 +1,6 @@
 use super::{NotificationTimeWindow, StoredTimestampFormat};
-use crate::content_helpers::extract_mentions_from_text;
 use crate::db_utils::d1_results;
 use crate::tracked_d1::D1Database;
-use cfwdon_core::AppConfig;
 use cfwdon_domain::LocalAccount;
 use serde::Deserialize;
 use worker::Result;
@@ -57,53 +55,33 @@ pub(crate) struct RemoteMentionNotificationRow {
     pub(crate) in_reply_to_id: Option<String>,
 }
 
+/// Local statuses that mention the viewer, from the mention rows written when
+/// each status was stored (`status_mentions_backfill` queues older statuses).
 pub(crate) async fn list_local_mention_notifications_for_account(
     db: &D1Database,
     viewer: &LocalAccount,
-    config: &AppConfig,
     limit: u32,
     window: &NotificationTimeWindow,
 ) -> Result<Vec<MentionNotificationRow>> {
-    let pattern = format!("%@{}%", viewer.username().to_ascii_lowercase());
     let bounds = window.sql_bounds(StoredTimestampFormat::Iso);
-    let mut bindings = vec![
-        D1Type::Text(viewer.id()),
-        D1Type::Text(pattern.as_str()),
-        D1Type::Integer(limit as i32),
-    ];
+    let mut bindings = vec![D1Type::Text(viewer.id()), D1Type::Integer(limit as i32)];
     bindings.extend(bounds.bindings());
     let result = db
         .prepare(format!(
-            "SELECT id, account_id, ap_id, in_reply_to_id, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_state, created_at
-             FROM statuses
-             WHERE account_id != ?1
-               AND lower(text_content) LIKE ?2{}
-             ORDER BY created_at DESC
-             LIMIT ?3",
-            bounds.clause("created_at", 4)
+            "SELECT s.id, s.account_id, s.ap_id, s.in_reply_to_id, s.quote_of_uri, s.content_html, s.text_content, s.spoiler_text, s.visibility, s.sensitive, s.language, s.quote_state, s.created_at
+             FROM status_mentions m
+             CROSS JOIN statuses s ON s.id = m.status_id
+             WHERE m.account_id = ?1
+               AND s.account_id != ?1{}
+             ORDER BY m.created_at DESC
+             LIMIT ?2",
+            bounds.clause("m.created_at", 3)
         ))
         .bind_refs(bindings.iter())?
         .all()
         .await?;
 
-    let mut rows = Vec::new();
-    for row in d1_results::<MentionNotificationRow>(&result)? {
-        if local_mention_row_targets_viewer(&row, viewer, config) {
-            rows.push(row);
-        }
-    }
-
-    Ok(rows)
-}
-
-fn local_mention_row_targets_viewer(
-    row: &MentionNotificationRow,
-    viewer: &LocalAccount,
-    config: &AppConfig,
-) -> bool {
-    extract_mentions_from_text(&row.text_content, config)
-        .into_iter()
-        .any(|handle| handle.username == viewer.username())
+    d1_results::<MentionNotificationRow>(&result)
 }
 
 /// Remote statuses that mention the viewer, from the mention rows written when
@@ -133,45 +111,4 @@ pub(crate) async fn list_remote_mention_notifications_for_account(
         .await?;
 
     d1_results::<RemoteMentionNotificationRow>(&result)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use cfwdon_domain::LocalAccountRecord;
-
-    fn test_config() -> AppConfig {
-        AppConfig::new(
-            "example.com".to_owned(),
-            "cfwdon".to_owned(),
-            "test".to_owned(),
-        )
-    }
-
-    fn test_viewer() -> LocalAccount {
-        LocalAccount::from_record(LocalAccountRecord::test_fixture("acct-alice", "alice"))
-    }
-
-    #[test]
-    fn local_mention_row_targets_viewer_uses_exact_mentions() {
-        let viewer = test_viewer();
-        let config = test_config();
-        let row = MentionNotificationRow {
-            id: "s1".to_owned(),
-            account_id: "acct-bob".to_owned(),
-            ap_id: None,
-            in_reply_to_id: None,
-            in_reply_to_account_id: None,
-            quote_of_uri: None,
-            content_html: String::new(),
-            text_content: "hello @alice".to_owned(),
-            spoiler_text: String::new(),
-            visibility: "public".to_owned(),
-            sensitive: 0,
-            language: None,
-            quote_state: "accepted".to_owned(),
-            created_at: "2025-01-01T00:00:00Z".to_owned(),
-        };
-        assert!(local_mention_row_targets_viewer(&row, &viewer, &config));
-    }
 }

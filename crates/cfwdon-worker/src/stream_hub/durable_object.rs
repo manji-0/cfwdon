@@ -13,12 +13,16 @@ use super::messages::{
 use super::naming::{
     stream_hub_channel_id_name, stream_hub_session_id_name, stream_is_session_channel,
 };
+use super::registry::{hub_registry_keys, replace_hub_registry_rows};
 use super::{
     STORAGE_FORWARD_TARGETS_KEY, STREAM_HUB_ACCOUNT_HEADER, STREAM_HUB_FORWARD_REGISTER_PATH,
-    STREAM_HUB_LIST_HEADER, STREAM_HUB_PUBLISH_PATH, STREAM_HUB_STREAM_HEADER,
-    STREAM_HUB_TAG_HEADER, STREAM_HUB_WEBSOCKET_PATH,
+    STREAM_HUB_LIST_HEADER, STREAM_HUB_NAME_HEADER, STREAM_HUB_PUBLISH_PATH,
+    STREAM_HUB_STREAM_HEADER, STREAM_HUB_TAG_HEADER, STREAM_HUB_WEBSOCKET_PATH,
 };
+use crate::runtime_config::load_config_from_env;
+use crate::tracked_d1::D1Database;
 use serde::Deserialize;
+use std::cell::Cell;
 use worker::{
     DurableObject, Env, Method, Request, Response, Result, State, WebSocket,
     WebSocketIncomingMessage, WebSocketPair, console_error, durable_object,
@@ -28,11 +32,18 @@ use worker::{
 pub struct StreamHub {
     state: State,
     env: Env,
+    registry_syncing: Cell<bool>,
+    registry_stale: Cell<bool>,
 }
 
 impl DurableObject for StreamHub {
     fn new(state: State, env: Env) -> Self {
-        Self { state, env }
+        Self {
+            state,
+            env,
+            registry_syncing: Cell::new(false),
+            registry_stale: Cell::new(false),
+        }
     }
 
     async fn fetch(&self, req: Request) -> Result<Response> {
@@ -122,6 +133,9 @@ impl DurableObject for StreamHub {
         }
 
         ws.serialize_attachment(&state)?;
+        if let Some(hub) = state.hub.as_deref() {
+            self.sync_registry(hub).await;
+        }
         Ok(())
     }
 
@@ -132,6 +146,14 @@ impl DurableObject for StreamHub {
         reason: String,
         _was_clean: bool,
     ) -> Result<()> {
+        let hub = ws
+            .deserialize_attachment::<SocketSubscriptionState>()
+            .ok()
+            .flatten()
+            .and_then(|state| state.hub);
+        // The closing socket may still be listed by `get_websockets`; drop its
+        // subscriptions so the registry sync below no longer counts them.
+        let _ = ws.serialize_attachment(SocketSubscriptionState::default());
         // Eviction arrives as 1006 / "no longer active". Echoing that close
         // either throws immediately or fails the hibernatable output pump
         // after this function returns Ok, and workerd then sets
@@ -148,6 +170,9 @@ impl DurableObject for StreamHub {
             || stream_hub_error_is_inactive_instance(&reason)
         {
             log_stream_hub_websocket_event("close", &reason, Some(close_reply));
+        }
+        if let Some(hub) = hub.as_deref() {
+            self.sync_registry(hub).await;
         }
         Ok(())
     }
@@ -193,6 +218,14 @@ impl StreamHub {
         }
 
         delivered += self.forward_publish(&publish).await?;
+
+        // The Worker publishes only to hubs the registry lists, so nobody
+        // receiving it means this hub's rows outlived their sockets.
+        if delivered == 0
+            && let Some(hub) = header_value(&req, STREAM_HUB_NAME_HEADER)
+        {
+            self.sync_registry(&hub).await;
+        }
 
         Response::from_json(&serde_json::json!({ "delivered": delivered }))
     }
@@ -297,6 +330,45 @@ impl StreamHub {
         }
     }
 
+    /// Replaces this hub's registry rows with what its live sockets hold. Runs
+    /// one write at a time; a change during a write triggers one more pass, so
+    /// the last write reflects the latest sockets.
+    async fn sync_registry(&self, hub: &str) {
+        if self.registry_syncing.replace(true) {
+            self.registry_stale.set(true);
+            return;
+        }
+        loop {
+            self.registry_stale.set(false);
+            let sockets = self
+                .state
+                .get_websockets()
+                .iter()
+                .filter_map(|socket| {
+                    socket
+                        .deserialize_attachment::<SocketSubscriptionState>()
+                        .ok()
+                        .flatten()
+                })
+                .collect::<Vec<_>>();
+            let keys = hub_registry_keys(hub, &sockets);
+            let written = match self
+                .env
+                .d1(&load_config_from_env(&self.env).database_binding)
+            {
+                Ok(db) => replace_hub_registry_rows(&D1Database::new(db), hub, &keys).await,
+                Err(error) => Err(error),
+            };
+            if let Err(error) = written {
+                console_error!("failed to update stream subscriptions of hub {hub}: {error}");
+            }
+            if !self.registry_stale.get() {
+                break;
+            }
+        }
+        self.registry_syncing.set(false);
+    }
+
     async fn handle_websocket_upgrade(&self, req: Request) -> Result<Response> {
         let params = stream_hub_connect_params(&req)?;
         let pair = WebSocketPair::new()?;
@@ -319,8 +391,14 @@ impl StreamHub {
         let state = SocketSubscriptionState {
             subscriptions,
             session_hub,
+            hub: header_value(&req, STREAM_HUB_NAME_HEADER),
         };
         pair.server.serialize_attachment(&state)?;
+        if let Some(hub) = state.hub.as_deref()
+            && !state.subscriptions.is_empty()
+        {
+            self.sync_registry(hub).await;
+        }
 
         if let Some(session_hub) = state.session_hub.clone() {
             for subscription in &state.subscriptions {

@@ -21,8 +21,12 @@ use crate::responses::MastodonStatusResponse;
 use crate::statuses::StatusQuoteCountsPreload;
 use crate::store::media::MediaAttachmentRow;
 use crate::store::statuses::{StatusCountsPreload, preload_status_counts};
-use crate::stream_hub::publish_user_stream_hub_event_soft;
-use crate::stream_hub_publish::publish_local_status_create_stream_fanout_soft;
+use crate::stream_hub::{
+    notification_stream_open, publish_user_stream_hub_event_soft, stream_audience,
+};
+use crate::stream_hub_publish::{
+    local_status_fanout_has_audience, publish_local_status_create_stream_fanout_soft,
+};
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{LocalStatus, QuoteState, StatusDraft};
@@ -214,34 +218,37 @@ async fn publish_created_status_stream_events(
     )
     .await;
 
-    let fanout_payload = match viewer_agnostic_local_status_stream_payload(
-        db,
-        config,
-        status,
-        author,
-        &artifacts.response_preload,
-        &artifacts.counts_preload,
-        &artifacts.quote_counts_preload,
-    )
-    .await
+    let audience = stream_audience(env).await;
+    if local_status_fanout_has_audience(&audience)
+        && let Some(fanout_payload) = viewer_agnostic_local_status_stream_payload(
+            db,
+            config,
+            status,
+            author,
+            &artifacts.response_preload,
+            &artifacts.counts_preload,
+            &artifacts.quote_counts_preload,
+        )
+        .await
     {
-        Some(payload) => payload,
-        None => return,
-    };
+        publish_local_status_create_stream_fanout_soft(
+            env,
+            db,
+            config,
+            author,
+            status,
+            &fanout_payload,
+            artifacts.has_media,
+        )
+        .await;
+    }
 
-    publish_local_status_create_stream_fanout_soft(
-        env,
-        db,
-        config,
-        author,
-        status,
-        &fanout_payload,
-        artifacts.has_media,
-    )
-    .await;
-
+    if !audience.has_stream("user:notification") {
+        return;
+    }
     if let Some(recipient_account_id) = in_reply_to_account_id
         && recipient_account_id != author.id()
+        && notification_stream_open(env, recipient_account_id).await
     {
         let id = local_status_interaction_notification_id("status", author.id(), &status.id);
         let status_response = build_local_status_response_for_recipient_soft(
@@ -270,6 +277,7 @@ async fn publish_created_status_stream_events(
     for handle in extract_mentions_from_text(&status.text, config) {
         if let Ok(Some(account)) = find_account_by_username(db, &handle.username).await
             && account.id() != author.id()
+            && notification_stream_open(env, account.id()).await
         {
             let id = local_status_interaction_notification_id("mention", author.id(), &status.id);
             let status_response = build_local_status_response_for_recipient_soft(
@@ -300,6 +308,7 @@ async fn publish_created_status_stream_events(
         && status.quote_state == QuoteState::Accepted
         && let Ok(Some(target)) = find_local_status_by_object_uri(db, config, quote_of_uri).await
         && target.account_id != author.id()
+        && notification_stream_open(env, &target.account_id).await
     {
         let id = local_status_interaction_notification_id("quote", author.id(), &status.id);
         let status_response = build_local_status_response_for_recipient_soft(

@@ -89,6 +89,9 @@ pub(super) struct SocketSubscriptionState {
     /// `public` subscriptions.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(super) session_hub: Option<String>,
+    /// The hub holding this socket, which owns its registry rows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) hub: Option<String>,
 }
 
 impl SocketSubscriptionState {
@@ -161,6 +164,7 @@ mod tests {
                 StreamSubscription::new("public:local".to_owned(), None, None),
             ],
             session_hub: Some(stream_hub_session_id_name("acct-1")),
+            hub: None,
         };
 
         assert!(state.matches("user", None, None));

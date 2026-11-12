@@ -46,3 +46,8 @@ web-ui-dev *args:
 #   just approve-account --remote alice
 approve-account *args:
     bash scripts/approve_account.sh {{args}}
+
+# D1 statements and serial rounds per API request on a seeded local DB
+# (build the worker first); see scripts/query_count/run.sh.
+query-count *args:
+    bash scripts/query_count/run.sh {{args}}

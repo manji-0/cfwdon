@@ -3,8 +3,8 @@ use super::retry::{
 };
 use super::{
     STREAM_HUB_ACCOUNT_HEADER, STREAM_HUB_INTERNAL_HEADERS, STREAM_HUB_INTERNAL_ORIGIN,
-    STREAM_HUB_LIST_HEADER, STREAM_HUB_STREAM_HEADER, STREAM_HUB_TAG_HEADER,
-    STREAM_HUB_WEBSOCKET_PATH,
+    STREAM_HUB_LIST_HEADER, STREAM_HUB_NAME_HEADER, STREAM_HUB_STREAM_HEADER,
+    STREAM_HUB_TAG_HEADER, STREAM_HUB_WEBSOCKET_PATH,
 };
 use worker::{Env, Method, Request, RequestInit, Response, Result, WebSocket};
 
@@ -71,6 +71,7 @@ pub(crate) async fn connect_stream_hub_websocket(
         || {
             let headers = worker::Headers::new();
             headers.set("Upgrade", "websocket")?;
+            headers.set(STREAM_HUB_NAME_HEADER, hub_name)?;
             set_stream_hub_subscription_headers(
                 &headers,
                 &StreamHubUpgradeParams {
@@ -126,6 +127,7 @@ pub(crate) async fn upgrade_stream_hub_websocket(
             }
             headers.set(name, value)?;
         }
+        headers.set(STREAM_HUB_NAME_HEADER, hub_name)?;
         set_stream_hub_subscription_headers(
             &headers,
             &StreamHubUpgradeParams {

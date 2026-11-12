@@ -116,6 +116,7 @@ async fn build_reblog_embedded_response(
                 poll_preload,
                 viewer_state_preload,
                 application_preload,
+                mention_preload,
                 boost_target_preload,
                 include_quote,
             )
@@ -159,10 +160,13 @@ async fn build_local_reblog_embedded_response(
     poll_preload: Option<&MastodonPollResponsePreload>,
     viewer_state_preload: Option<&LocalStatusViewerStatePreload>,
     application_preload: Option<&StatusApplicationPreload>,
+    mention_preload: Option<&MentionAccountsPreload>,
     boost_target_preload: Option<&BoostTargetPreload>,
     include_quote: bool,
 ) -> Result<Option<MastodonStatusResponse>> {
-    let Some(subject) = resolve_local_status_response_subject(db, viewer, local_status).await?
+    let embed = boost_target_preload.and_then(BoostTargetPreload::embed_preloads);
+    let Some(subject) =
+        resolve_local_status_response_subject(db, viewer, local_status, embed).await?
     else {
         return Ok(None);
     };
@@ -194,7 +198,7 @@ async fn build_local_reblog_embedded_response(
             poll_preload,
             viewer_state_preload,
             application_preload,
-            None,
+            mention_preload,
             boost_target_preload,
             include_quote,
         ))
@@ -287,6 +291,7 @@ pub(super) async fn build_local_reblog_wrapper_response(
     poll_preload: Option<&MastodonPollResponsePreload>,
     viewer_state_preload: Option<&LocalStatusViewerStatePreload>,
     application_preload: Option<&StatusApplicationPreload>,
+    mention_preload: Option<&MentionAccountsPreload>,
     boost_target_preload: Option<&BoostTargetPreload>,
     include_quote: bool,
 ) -> Result<MastodonStatusResponse> {
@@ -309,7 +314,7 @@ pub(super) async fn build_local_reblog_wrapper_response(
         None,
         None,
         None,
-        None,
+        mention_preload,
         None,
         None,
         None,

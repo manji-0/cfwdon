@@ -155,6 +155,7 @@ async fn insert_local_status_intent(
             application_id,
             in_reply_to_account_id,
             card_json,
+            quoted_account_id,
             created_at,
             updated_at
         ) VALUES (
@@ -175,6 +176,8 @@ async fn insert_local_status_intent(
             ?15,
             ?16,
             ?17,
+            (SELECT target.account_id FROM statuses target
+             WHERE target.ap_id = ?6 AND target.account_id <> ?2),
             ?18,
             ?18
         )",
@@ -410,6 +413,7 @@ pub(crate) async fn insert_status_poll(
             "INSERT INTO status_polls (
             id,
             status_id,
+            account_id,
             multiple,
             hide_totals,
             expires_at,
@@ -418,6 +422,7 @@ pub(crate) async fn insert_status_poll(
         ) VALUES (
             ?1,
             ?2,
+            (SELECT account_id FROM statuses WHERE id = ?2),
             ?3,
             ?4,
             ?5,

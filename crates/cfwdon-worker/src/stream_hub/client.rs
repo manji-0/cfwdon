@@ -2,7 +2,7 @@ use super::messages::StreamSubscription;
 use super::retry::fetch_stream_hub_with_inactive_retry;
 use super::{
     STREAM_HUB_BINDING_VAR, STREAM_HUB_DEFAULT_BINDING, STREAM_HUB_FORWARD_REGISTER_PATH,
-    STREAM_HUB_INTERNAL_ORIGIN, STREAM_HUB_PUBLISH_PATH,
+    STREAM_HUB_INTERNAL_ORIGIN, STREAM_HUB_NAME_HEADER, STREAM_HUB_PUBLISH_PATH,
 };
 use serde::Deserialize;
 use worker::{Env, Method, Request, RequestInit, Response, Result};
@@ -39,6 +39,7 @@ pub(super) async fn post_json_to_stream_hub(
     fetch_stream_hub_with_inactive_retry(env, binding, hub_name, "publish", || {
         let headers = worker::Headers::new();
         headers.set("Content-Type", "application/json")?;
+        headers.set(STREAM_HUB_NAME_HEADER, hub_name)?;
 
         let mut init = RequestInit::new();
         init.with_method(Method::Post)

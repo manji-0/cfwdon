@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import re
 import sqlite3
 import sys
 from pathlib import Path
@@ -121,6 +122,446 @@ def assert_no_null_cursor_disjunction(_plan: str, sql: str, label: str) -> None:
         raise RuntimeError(f"{label}: query still uses nullable cursor disjunctions")
 
 
+STORE_LOCAL_RS = (
+    REPO_ROOT / "crates" / "cfwdon-worker" / "src" / "statuses" / "store_local.rs"
+)
+
+
+def rust_str_const(source: str, name: str) -> str:
+    match = re.search(rf'const {name}: &str = "(.*?)";', source, re.DOTALL)
+    if match is None:
+        raise RuntimeError(f"{name} not found in {STORE_LOCAL_RS}")
+    return match.group(1)
+
+
+def assert_thread_queries(conn: sqlite3.Connection) -> None:
+    """Run the thread context SQL as written in `store_local.rs` (not a copy)
+    on a mixed local/remote thread, so a broken query fails here, not as a 500."""
+    source = STORE_LOCAL_RS.read_text()
+    columns = rust_str_const(source, "LOCAL_REPLY_COLUMNS")
+    tree_cte = rust_str_const(source, "LOCAL_REPLY_TREE_CTE")
+    chain = re.search(r'"(WITH RECURSIVE chain.*?)"\n', source, re.DOTALL)
+    if chain is None:
+        raise RuntimeError("ancestor chain query not found in store_local.rs")
+    chain_sql = chain.group(1).replace("{LOCAL_REPLY_COLUMNS}", columns)
+
+    def local(status_id: str, parent: str | None, ts: str) -> None:
+        conn.execute(
+            """INSERT INTO statuses (
+                id, account_id, in_reply_to_id, content_html, text_content, visibility,
+                quote_approval_policy, quote_state, created_at
+             ) VALUES (?, 'acct-1', ?, '<p>x</p>', 'x', 'public', 'public', 'accepted', ?)""",
+            (status_id, parent, ts),
+        )
+
+    def remote(status_id: str, parent_uri: str, ts: str) -> None:
+        conn.execute(
+            """INSERT INTO remote_statuses (
+                id, actor_uri, object_uri, url, in_reply_to_uri, content_html,
+                visibility, published_at, raw_object_json
+             ) VALUES (?, 'https://remote.example/users/bob', ?, ?, ?, '<p>x</p>',
+                       'public', ?, '{}')""",
+            (status_id, f"https://remote.example/{status_id}", None, parent_uri, ts),
+        )
+
+    local("thread-root", None, "2026-03-01T00:00:00Z")
+    local("thread-1", "thread-root", "2026-03-01T00:01:00Z")
+    local("thread-2", "thread-1", "2026-03-01T00:02:00Z")
+    remote("thread-r1", "https://example.com/users/alice/statuses/thread-1", "2026-03-01T00:03:00Z")
+    remote("thread-r2", "https://remote.example/thread-r1", "2026-03-01T00:04:00Z")
+    local("thread-other", None, "2026-03-01T00:05:00Z")
+
+    ancestors = [row[0] for row in conn.execute(chain_sql, ("thread-2", 256))]
+    if ancestors != ["thread-2", "thread-1", "thread-root"]:
+        raise RuntimeError(f"ancestor chain: got {ancestors}")
+
+    tree_params = ("thread-root", "https://example.com/statuses/thread-root",
+                   "https://example.com/users/", 256)
+    tree = sorted(
+        conn.execute(f"{tree_cte} SELECT kind, id FROM reply_tree WHERE depth > 0", tree_params)
+    )
+    expected = [("local", "thread-1"), ("local", "thread-2"),
+                ("remote", "thread-r1"), ("remote", "thread-r2")]
+    if tree != expected:
+        raise RuntimeError(f"reply tree: got {tree}")
+    shallow = sorted(
+        conn.execute(
+            f"{tree_cte} SELECT id FROM reply_tree WHERE depth > 0", tree_params[:3] + (1,)
+        )
+    )
+    if shallow != [("thread-1",)]:
+        raise RuntimeError(f"reply tree depth cap: got {shallow}")
+    for label, sql in (
+        ("ancestor chain", chain_sql),
+        ("reply tree", f"{tree_cte} SELECT id FROM reply_tree"),
+    ):
+        params = ("thread-2", 256) if label == "ancestor chain" else tree_params
+        plan = plan_text(conn, sql, params)
+        if re.search(r"'(SCAN (s|rs|statuses)\b|SEARCH (s|rs) USING AUTOMATIC)", plan):
+            raise RuntimeError(f"{label}: expected index seeks, got:\n{plan}")
+
+
+RELAYS_RS = REPO_ROOT / "crates" / "cfwdon-worker" / "src" / "relays.rs"
+
+
+def assert_remote_purge_slices(conn: sqlite3.Connection) -> None:
+    """Run the retention purge SQL from `relays.rs` a slice at a time: each run
+    reads a bounded slice, keeps referenced statuses, and the cursor moves on."""
+    source = RELAYS_RS.read_text()
+    slice_sql = rust_str_const(source, "STALE_PUBLIC_REMOTE_SLICE_SQL")
+    purge = re.search(
+        r"fn stale_public_remote_status_purge_sql\(\) -> &'static str \{.*?\"(DELETE FROM remote_statuses.*?)\"\n\}",
+        source,
+        re.DOTALL,
+    )
+    if purge is None:
+        raise RuntimeError("stale_public_remote_status_purge_sql not found in relays.rs")
+    purge_sql = purge.group(1)
+
+    conn.execute(
+        """INSERT INTO remote_actors (
+            actor_uri, username, domain, inbox_uri, public_key_id, public_key_pem
+         ) VALUES ('https://stale.example/users/s', 's', 'stale.example',
+                   'https://stale.example/inbox', 'https://stale.example/users/s#k', 'k')"""
+    )
+    for index in range(1, 6):
+        conn.execute(
+            """INSERT INTO remote_statuses (
+                id, actor_uri, object_uri, content_html, visibility, published_at,
+                raw_object_json, in_reply_to_uri
+             ) VALUES (?, 'https://stale.example/users/s', ?, '<p>x</p>', 'public', ?, '{}', ?)""",
+            (
+                f"stale-{index}",
+                f"https://stale.example/statuses/{index}",
+                f"2020-01-0{index}T00:00:00Z",
+                # stale-5 replies to stale-2, so stale-2 must stay; nothing
+                # refers to stale-5, so it goes.
+                "https://stale.example/statuses/2" if index == 5 else None,
+            ),
+        )
+    retention = "-7 days"
+    cursor = ("", "")
+    examined: list[str] = []
+    for _ in range(3):
+        rows = conn.execute(slice_sql, (retention, cursor[0], cursor[1], 2)).fetchall()
+        stale_rows = [row for row in rows if row[0].startswith("stale-")]
+        examined.extend(row[0] for row in stale_rows)
+        if not rows:
+            break
+        last = rows[-1]
+        conn.execute(purge_sql, (retention, cursor[0], cursor[1], last[1], last[0]))
+        cursor = (last[1], last[0])
+    remaining = sorted(
+        row[0] for row in conn.execute("SELECT id FROM remote_statuses WHERE id LIKE 'stale-%'")
+    )
+    if remaining != ["stale-2"]:
+        raise RuntimeError(f"remote purge kept {remaining}, expected only stale-2")
+    followed = conn.execute(
+        "SELECT COUNT(*) FROM remote_statuses WHERE id LIKE 'rs-%'"
+    ).fetchone()[0]
+    if followed != 120:
+        raise RuntimeError(f"remote purge deleted a followed author's statuses: {followed} left")
+    if examined[:2] != ["stale-1", "stale-2"]:
+        raise RuntimeError(f"remote purge slices out of order: {examined}")
+    plan = plan_text(conn, slice_sql, (retention, "", "", 2000))
+    assert_uses_index(plan, "remote purge slice")
+    if "SCAN rs " in plan and "USING" not in plan.split("SCAN rs ", 1)[1].split(")", 1)[0]:
+        raise RuntimeError(f"remote purge slice scans remote_statuses:\n{plan}")
+    # Each kept-if-referenced probe (boost, quote, reply) seeks its index.
+    plan = plan_text(conn, purge_sql, (retention, "", "", "2020-01-05", "stale-5"))
+    probes = re.findall(r"'(\w+) ref USING", plan)
+    if probes != ["SEARCH"] * 6:
+        raise RuntimeError(f"remote purge reference probes must seek, got:\n{plan}")
+
+
+NOTIFICATIONS_DIR = REPO_ROOT / "crates" / "cfwdon-worker" / "src" / "notifications"
+STATUS_INSERT_RS = REPO_ROOT / "crates" / "cfwdon-worker" / "src" / "statuses" / "status_insert.rs"
+REMOTE_UPSERT_SQL_RS = (
+    REPO_ROOT / "crates" / "cfwdon-worker" / "src" / "remote" / "store" / "upsert_sql.rs"
+)
+NOTIFICATION_COLLECTOR_RE = re.compile(
+    r'async fn (list_\w+_notifications_for_account)\((?:(?!async fn).)*?'
+    r'\.prepare\(format!\(\s*"(.*?)",\s*bounds\.clause\("([^"]+)",\s*(\d+)\)',
+    re.DOTALL,
+)
+
+
+def notification_collector_sql() -> dict[str, tuple[str, str]]:
+    """Each collector's SQL as written in `notifications/*_store.rs`, with its
+    time-window placeholder filled with and without bounds."""
+    queries: dict[str, tuple[str, str]] = {}
+    for file in sorted(NOTIFICATIONS_DIR.glob("*_store.rs")):
+        for name, sql, column, first in NOTIFICATION_COLLECTOR_RE.findall(file.read_text()):
+            first_param = int(first)
+            bounded = sql.replace(
+                "{}", f" AND {column} >= ?{first_param} AND {column} < ?{first_param + 1}"
+            )
+            queries[name] = (sql.replace("{}", ""), bounded)
+    return queries
+
+
+# Lookups served by a partial index (`WHERE col IS NOT NULL`, 137) or by the
+# index left after a duplicate was dropped. SQLite uses a partial index only
+# when the query's WHERE implies the index's, so each must still name it.
+# Foreign-key cascades look children up as `DELETE FROM child WHERE col = ?`.
+NAMED_INDEX_CHECKS: list[tuple[str, str, tuple[object, ...], str]] = [
+    (
+        "remote quotes of a status",
+        """SELECT id FROM remote_statuses
+           WHERE quote_of_uri = ?1 AND quote_state = 'accepted'""",
+        ("https://example.com/statuses/1",),
+        "idx_remote_statuses_quote_of_uri_state",
+    ),
+    (
+        "local quotes of a status by uri",
+        "SELECT id FROM statuses WHERE quote_of_uri = ?1",
+        ("https://example.com/statuses/1",),
+        "idx_statuses_quote_of_uri_state",
+    ),
+    (
+        "remote replies to a set of statuses",
+        """SELECT rs.id FROM remote_statuses rs
+           WHERE rs.in_reply_to_uri IN (SELECT value FROM json_each(?1))
+           ORDER BY rs.published_at ASC""",
+        ('["https://example.com/statuses/1"]',),
+        "idx_remote_statuses_in_reply_to_uri",
+    ),
+    (
+        "inbound Delete target by object uri or url",
+        "SELECT 1 FROM remote_statuses rs WHERE rs.object_uri = ?1 OR rs.url = ?1",
+        ("https://remote.example/@bob/1",),
+        "idx_remote_statuses_url",
+    ),
+    (
+        "remote account statuses without boosts or replies walk the actor",
+        """SELECT id FROM remote_statuses
+           WHERE actor_uri = ?1
+             AND visibility IN ('public', 'unlisted')
+             AND boost_of_uri IS NULL
+             AND in_reply_to_uri IS NULL
+           ORDER BY published_at DESC, id DESC
+           LIMIT ?2""",
+        ("https://remote.example/users/bob", 20),
+        "idx_remote_statuses_actor_published",
+    ),
+    (
+        "unreblog deletes the local reblog wrapper by target",
+        "DELETE FROM statuses WHERE account_id = ?1 AND boost_of_uri = ?2",
+        ("acct-1", "https://example.com/statuses/1"),
+        "idx_statuses_boost_of_uri",
+    ),
+    (
+        "deleted status clears local reply refs",
+        "UPDATE statuses SET in_reply_to_id = NULL WHERE in_reply_to_id = ?1",
+        ("status-1",),
+        "idx_statuses_in_reply_to_id",
+    ),
+    (
+        "favourites saved page walks the account in rowid order",
+        """SELECT rowid AS cursor_id, status_id, remote_status_id
+           FROM favourites
+           WHERE account_id = ?1
+             AND (?2 IS NULL OR rowid < ?2)
+             AND (?3 IS NULL OR rowid > ?3)
+           ORDER BY rowid DESC
+           LIMIT ?4""",
+        ("acct-1", None, None, 60),
+        "idx_favourites_account_id",
+    ),
+    (
+        "bookmarks saved page walks the account in rowid order",
+        """SELECT rowid AS cursor_id, status_id, remote_status_id
+           FROM bookmarks
+           WHERE account_id = ?1
+             AND (?2 IS NULL OR rowid < ?2)
+             AND (?3 IS NULL OR rowid > ?3)
+           ORDER BY rowid DESC
+           LIMIT ?4""",
+        ("acct-1", None, None, 60),
+        "idx_bookmarks_account_id",
+    ),
+    *(
+        (
+            f"cascade from a deleted status seeks {table}.{column}",
+            f"DELETE FROM {table} WHERE {column} = ?1",
+            ("status-1",),
+            index,
+        )
+        for table, column, index in [
+            ("favourites", "status_id", "idx_favourites_status_created"),
+            ("favourites", "remote_status_id", "idx_favourites_remote_status_created"),
+            ("reblogs", "status_id", "idx_reblogs_status_created"),
+            ("reblogs", "remote_status_id", "idx_reblogs_remote_status_created"),
+            ("bookmarks", "status_id", "idx_bookmarks_status_id"),
+            ("bookmarks", "remote_status_id", "idx_bookmarks_remote_status_id"),
+            ("remote_favourites", "status_id", "idx_remote_favourites_status_created"),
+            ("remote_reblogs", "status_id", "idx_remote_reblogs_status_created"),
+            ("follows", "target_account_id", "idx_follows_target_state"),
+        ]
+    ),
+]
+
+
+def assert_named_index_queries(conn: sqlite3.Connection) -> None:
+    for label, sql, params, index in NAMED_INDEX_CHECKS:
+        plan = plan_text(conn, sql, params)
+        if not re.search(rf"INDEX {index}\b", plan):
+            raise RuntimeError(f"{label}: expected {index}, got:\n{plan}")
+        if "LIMIT" in sql and "TEMP B-TREE" in plan:
+            raise RuntimeError(f"{label}: LIMIT must stop on the index, got:\n{plan}")
+
+
+def assert_notification_queries(conn: sqlite3.Connection) -> None:
+    """Notifications are derived on every read, so each collector must seek the
+    viewer's rows by an index on the notified account, never walk statuses or
+    interactions. Run the real collector SQL and the real insert SQL that
+    records the notified account, and check what each collector returns."""
+    queries = notification_collector_sql()
+    if len(queries) < 15:
+        raise RuntimeError(f"expected every notification collector, found {sorted(queries)}")
+
+    source = STATUS_INSERT_RS.read_text()
+    status_insert = re.search(r'"(INSERT INTO statuses \(.*?quoted_account_id.*?)",', source, re.DOTALL)
+    poll_insert = re.search(r'"(INSERT INTO status_polls \(.*?)",', source, re.DOTALL)
+    remote_upsert = re.search(
+        r'fn remote_status_upsert_sql\(\) -> &\'static str \{\s*"(.*?)"\n\}',
+        REMOTE_UPSERT_SQL_RS.read_text(),
+        re.DOTALL,
+    )
+    if status_insert is None or poll_insert is None or remote_upsert is None:
+        raise RuntimeError("status, poll or remote status insert SQL not found")
+
+    viewer, other = "acct-2", "acct-3"
+    ap = "https://example.com/statuses/"
+
+    def local(status_id: str, account: str, ts: str, quote_of: str | None = None) -> None:
+        conn.execute(
+            status_insert.group(1),
+            (status_id, account, ap + status_id, None, None, quote_of, "<p>x</p>", "x", "",
+             "public", 0, None, "public", "accepted", None, None, None, ts),
+        )
+
+    local("n-own", viewer, "2026-03-01T00:00:00Z")
+    local("n-quote", other, "2026-03-01T00:01:00Z", ap + "n-own")
+    local("n-self-quote", viewer, "2026-03-01T00:02:00Z", ap + "n-own")
+    local("n-quoting-remote", viewer, "2026-03-01T00:03:00Z", "https://remote.example/statuses/q")
+    remote_params = [
+        "n-rquote", "https://remote.example/users/bob", "https://remote.example/statuses/n-rquote",
+        None, None, ap + "n-own", "<p>x</p>", "x", "", "public", 0, None, "accepted",
+        "2026-03-01T00:04:00Z", "{}", "2026-03-01T00:04:00Z", None, None, "[]", None,
+    ]
+    conn.execute(remote_upsert.group(1), remote_params)
+    conn.execute(
+        "UPDATE remote_statuses SET edited_at = '2026-03-02T00:00:00Z' WHERE id = 'rs-3'"
+    )
+    conn.execute(
+        "UPDATE statuses SET quote_of_uri = 'https://remote.example/statuses/3' WHERE id = 'n-quoting-remote'"
+    )
+    recorded = dict(conn.execute(
+        "SELECT id, quoted_account_id FROM statuses WHERE id LIKE 'n-%' "
+        "UNION ALL SELECT id, quoted_account_id FROM remote_statuses WHERE id = 'n-rquote'"
+    ))
+    if recorded != {"n-own": None, "n-quote": viewer, "n-self-quote": None,
+                    "n-quoting-remote": None, "n-rquote": viewer}:
+        raise RuntimeError(f"quoted_account_id recorded at insert: got {recorded}")
+
+    conn.execute(
+        """INSERT INTO status_mentions (status_id, mention_key, account_id, username, acct, url, created_at)
+           VALUES ('n-quote', 'user2', ?1, 'user2', 'user2', 'u', '2026-03-01T00:01:00Z'),
+                  ('n-self-quote', 'user2', ?1, 'user2', 'user2', 'u', '2026-03-01T00:02:00Z')""",
+        (viewer,),
+    )
+    for table, actor_column, actor in (
+        ("favourites", "account_id", other),
+        ("reblogs", "account_id", other),
+        ("remote_favourites", "remote_actor_uri", "https://remote.example/users/bob"),
+        ("remote_reblogs", "remote_actor_uri", "https://remote.example/users/bob"),
+    ):
+        conn.execute(
+            f"""INSERT INTO {table} ({actor_column}, status_id, target_uri, notified_account_id, created_at)
+                VALUES (?, 'n-own', ?, ?, '2026-03-01 00:05:00')""",
+            (actor, ap + "n-own", viewer),
+        )
+    conn.execute(
+        """INSERT INTO favourites (account_id, status_id, target_uri, notified_account_id, created_at)
+           VALUES (?, 'n-own', 'self', NULL, '2026-03-01 00:06:00')""",
+        (viewer,),
+    )
+    conn.execute(poll_insert.group(1), ("poll-own", "n-own", 0, 0, "2026-03-02T00:00:00Z",
+                                        "2026-03-01T00:00:00Z"))
+    conn.execute(poll_insert.group(1), ("poll-voted", "status-1", 1, 0, "2026-03-02T00:00:00Z",
+                                        "2026-03-01T00:00:00Z"))
+    conn.execute(poll_insert.group(1), ("poll-other", "n-quote", 0, 0, "2026-03-02T00:00:00Z",
+                                        "2026-03-01T00:00:00Z"))
+    for position in (0, 1):
+        conn.execute(
+            """INSERT INTO status_poll_options (id, poll_id, title, position)
+               VALUES (?, 'poll-voted', 'option', ?)""",
+            (f"option-{position}", position),
+        )
+        conn.execute(
+            """INSERT INTO status_poll_votes (id, poll_id, account_id, option_position)
+               VALUES (?, 'poll-voted', ?, ?)""",
+            (f"vote-{position}", viewer, position),
+        )
+    authors = dict(conn.execute("SELECT id, account_id FROM status_polls"))
+    if authors != {"poll-own": viewer, "poll-voted": "acct-1", "poll-other": other}:
+        raise RuntimeError(f"status_polls.account_id recorded at insert: got {authors}")
+
+    expected = {
+        "list_favourite_notifications_for_account": [(other, "n-own")],
+        "list_reblog_notifications_for_account": [(other, "n-own")],
+        "list_remote_favourite_notifications_for_account": [
+            ("https://remote.example/users/bob", "n-own")
+        ],
+        "list_remote_reblog_notifications_for_account": [
+            ("https://remote.example/users/bob", "n-own")
+        ],
+        "list_local_mention_notifications_for_account": [("n-quote",)],
+        "list_local_quote_notifications_for_account": [("n-quote",)],
+        "list_remote_quote_notifications_for_account": [("n-rquote",)],
+        "list_quoted_update_notifications_for_account": [("n-quoting-remote",)],
+        "list_poll_notifications_for_account": [("poll-own",), ("poll-voted",)],
+    }
+    # The index each collector must drive from: an index on the notified
+    # account, not on the viewer's own statuses (a walk of their history).
+    driving_index = {
+        "list_favourite_notifications_for_account": "idx_favourites_notified_created",
+        "list_reblog_notifications_for_account": "idx_reblogs_notified_created",
+        "list_remote_favourite_notifications_for_account": "idx_remote_favourites_notified_created",
+        "list_remote_reblog_notifications_for_account": "idx_remote_reblogs_notified_created",
+        "list_local_mention_notifications_for_account": "idx_status_mentions_account_created",
+        "list_local_quote_notifications_for_account": "idx_statuses_quoted_account_created",
+        "list_remote_quote_notifications_for_account": "idx_remote_statuses_quoted_account_published",
+        "list_quoted_update_notifications_for_account": "idx_statuses_account_quoting",
+        "list_poll_notifications_for_account": "idx_status_polls_account_expires",
+        "list_remote_follow_notifications_for_account": "idx_followers_account_created",
+    }
+    # A month either side: the bound sorts the same against `YYYY-MM-DD HH:MM:SS`
+    # and ISO timestamps, so one window serves both stored formats.
+    window = ("2026-02-01T00:00:00", "2026-04-01T00:00:00")
+    for name, (sql, bounded) in queries.items():
+        for variant, params in (("unbounded", (viewer, 20)), ("bounded", (viewer, 20) + window)):
+            text = sql if variant == "unbounded" else bounded
+            try:
+                plan = plan_text(conn, text, params)
+            except sqlite3.Error as error:
+                raise RuntimeError(f"{name} ({variant}): {error}") from error
+            scans = [line for line in plan.splitlines() if "SCAN " in line]
+            if scans:
+                raise RuntimeError(f"{name} ({variant}): expected index seeks, got:\n{plan}")
+            if name in driving_index and driving_index[name] not in plan:
+                raise RuntimeError(
+                    f"{name} ({variant}): expected a seek on {driving_index[name]}, got:\n{plan}"
+                )
+            if name in expected:
+                rows = [tuple(row[: len(expected[name][0])]) for row in conn.execute(text, params)]
+                if name == "list_poll_notifications_for_account":
+                    rows = sorted(rows)
+                if rows != expected[name]:
+                    raise RuntimeError(f"{name} ({variant}): got {rows}, expected {expected[name]}")
+
+
 def seed(conn: sqlite3.Connection) -> None:
     conn.execute(
         "INSERT INTO accounts (id, username, access_email, display_name) VALUES (?, ?, ?, ?)",
@@ -143,13 +584,15 @@ def seed(conn: sqlite3.Connection) -> None:
         ts = f"2026-01-{(index % 28) + 1:02d}T12:00:00Z"
         conn.execute(
             """INSERT INTO statuses (
-                id, account_id, ap_id, content_html, text_content, visibility,
+                id, account_id, ap_id, in_reply_to_id, content_html, text_content, visibility,
                 quote_approval_policy, quote_state, created_at
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 f"status-{index}",
                 "acct-1",
                 f"https://example.com/statuses/{index}",
+                # Some replies, so ANALYZE sees `in_reply_to_id` as selective.
+                f"status-{index - 1}" if index % 4 == 0 else None,
                 "<p>x</p>",
                 "x",
                 "public",
@@ -533,11 +976,18 @@ def main() -> int:
                 assert_no_null_cursor_disjunction(plan, sql, label)
             assert_remote_home_actor_slices(conn)
             assert_retention_prunes_seek_age(conn)
+            assert_thread_queries(conn)
+            assert_remote_purge_slices(conn)
+            assert_notification_queries(conn)
+            assert_named_index_queries(conn)
     except RuntimeError as error:
         print(f"query plan check failed: {error}", file=sys.stderr)
         return 1
 
-    print(f"query plan check ok: verified {len(checks)} critical queries")
+    print(
+        "query plan check ok: verified "
+        f"{len(checks) + len(NAMED_INDEX_CHECKS)} critical queries"
+    )
     return 0
 
 

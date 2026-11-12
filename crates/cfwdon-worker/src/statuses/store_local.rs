@@ -381,24 +381,62 @@ fn public_account_statuses_sql<'a>(
 
 const LOCAL_REPLY_COLUMNS: &str = "id, account_id, ap_id, in_reply_to_id, in_reply_to_account_id, boost_of_uri, quote_of_uri, content_html, text_content, spoiler_text, visibility, sensitive, language, quote_approval_policy, quote_state, application_id, card_json, created_at, updated_at";
 
-/// Direct replies to any of `status_ids`, oldest first.
-pub(crate) async fn list_direct_local_replies_to_ids(
+/// `reply_tree(kind, id, uri, depth)`: every local and remote status below
+/// one local root, walked in a single recursive query instead of one round
+/// trip per thread level. A local status's URI is its `ap_id`, or the URI
+/// `local_context_object_uri` derives from `?3` (the actor URL prefix). Local
+/// replies hang off local parents by `in_reply_to_id`; remote replies hang off
+/// any node by `in_reply_to_uri`. `?4` caps the depth.
+///
+/// Bindings: `?1` root id, `?2` root object URI, `?3` `{actor_url("")}`, `?4` max depth.
+pub(crate) const LOCAL_REPLY_TREE_CTE: &str = "WITH RECURSIVE reply_tree(kind, id, uri, depth) AS (
+                 SELECT 'local', ?1, ?2, 0
+                 UNION
+                 SELECT 'local', s.id, COALESCE(s.ap_id, ?3 || a.username || '/statuses/' || s.id), t.depth + 1
+                 FROM reply_tree t
+                 JOIN statuses s ON s.in_reply_to_id = t.id
+                 JOIN accounts a ON a.id = s.account_id
+                 WHERE t.kind = 'local' AND t.depth < ?4
+                 UNION
+                 SELECT 'remote', rs.id, rs.object_uri, t.depth + 1
+                 FROM reply_tree t
+                 JOIN remote_statuses rs ON rs.in_reply_to_uri = t.uri
+                 WHERE t.depth < ?4
+             )";
+
+/// The bindings [`LOCAL_REPLY_TREE_CTE`] reads.
+pub(crate) fn local_reply_tree_bindings<'a>(
+    root_id: &'a str,
+    root_uri: &'a str,
+    actor_url_prefix: &'a str,
+    max_depth: u32,
+) -> [D1Type<'a>; 4] {
+    [
+        D1Type::Text(root_id),
+        D1Type::Text(root_uri),
+        D1Type::Text(actor_url_prefix),
+        D1Type::Integer(i32::try_from(max_depth).unwrap_or(i32::MAX)),
+    ]
+}
+
+/// Every local status in the reply tree below `root_id` (not the root), oldest first.
+pub(crate) async fn list_local_reply_tree(
     db: &D1Database,
-    status_ids: &[String],
+    root_id: &str,
+    root_uri: &str,
+    actor_url_prefix: &str,
+    max_depth: u32,
 ) -> Result<Vec<LocalStatus>> {
-    if status_ids.is_empty() {
-        return Ok(Vec::new());
-    }
-    let ids = json_string_array(status_ids);
+    let bindings = local_reply_tree_bindings(root_id, root_uri, actor_url_prefix, max_depth);
     let result = db
         .prepare(format!(
-            "SELECT {LOCAL_REPLY_COLUMNS}
+            "{LOCAL_REPLY_TREE_CTE}
+             SELECT {LOCAL_REPLY_COLUMNS}
              FROM statuses
-             WHERE in_reply_to_id {}
-             ORDER BY created_at ASC",
-            sql_in_json_each(1)
+             WHERE id IN (SELECT id FROM reply_tree WHERE kind = 'local' AND depth > 0)
+             ORDER BY created_at ASC"
         ))
-        .bind_refs(&D1Type::Text(&ids))?
+        .bind_refs(bindings.iter())?
         .all()
         .await?;
     d1_results::<LocalStatusRecord>(&result).and_then(statuses_from_records)
@@ -414,18 +452,18 @@ pub(crate) async fn list_local_reply_chain(
     let bindings = [D1Type::Text(status_id), D1Type::Integer(max_depth as i32)];
     let result = db
         .prepare(format!(
-            "WITH RECURSIVE chain(id, depth) AS (
+            "WITH RECURSIVE chain(status_id, depth) AS (
                  SELECT ?1, 1
                  UNION ALL
                  SELECT s.in_reply_to_id, chain.depth + 1
                  FROM statuses s
-                 JOIN chain ON s.id = chain.id
+                 JOIN chain ON s.id = chain.status_id
                  WHERE s.in_reply_to_id IS NOT NULL
                    AND chain.depth < ?2
              )
              SELECT {LOCAL_REPLY_COLUMNS}
              FROM chain
-             JOIN statuses ON statuses.id = chain.id
+             CROSS JOIN statuses ON statuses.id = chain.status_id
              ORDER BY chain.depth ASC"
         ))
         .bind_refs(bindings.iter())?
@@ -439,6 +477,16 @@ pub(crate) fn local_status_target_uri(status: &LocalStatus) -> String {
         .ap_id
         .clone()
         .unwrap_or_else(|| format!("local:{}", status.id))
+}
+
+/// `notified_account_id` of a favourite or boost of `status` by `actor_id`:
+/// the author, unless the author interacts with their own status.
+pub(crate) fn notified_account_binding<'a>(status: &'a LocalStatus, actor_id: &str) -> D1Type<'a> {
+    if status.account_id == actor_id {
+        D1Type::Null
+    } else {
+        D1Type::Text(status.account_id.as_str())
+    }
 }
 
 pub(crate) async fn find_local_status_by_object_uri(
@@ -462,5 +510,49 @@ pub(crate) async fn find_local_status_by_object_uri(
         Ok(Some(status))
     } else {
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::notified_account_binding;
+    use cfwdon_domain::{LocalStatus, QuoteState, Visibility};
+    use worker::d1::D1Type;
+
+    fn status_by(account_id: &str) -> LocalStatus {
+        LocalStatus {
+            id: "s1".to_owned(),
+            account_id: account_id.to_owned(),
+            ap_id: None,
+            in_reply_to_id: None,
+            in_reply_to_account_id: None,
+            boost_of_uri: None,
+            quote_of_uri: None,
+            content_html: String::new(),
+            text: String::new(),
+            spoiler_text: String::new(),
+            visibility: Visibility::Public,
+            sensitive: false,
+            language: None,
+            quote_approval_policy: None,
+            quote_state: QuoteState::Accepted,
+            application_id: None,
+            card_json: None,
+            created_at: "2026-05-10T01:02:03Z".to_owned(),
+            updated_at: None,
+        }
+    }
+
+    #[test]
+    fn interactions_notify_the_author_unless_the_author_interacts() {
+        let status = status_by("author");
+        assert!(matches!(
+            notified_account_binding(&status, "fan"),
+            D1Type::Text("author")
+        ));
+        assert!(matches!(
+            notified_account_binding(&status, "author"),
+            D1Type::Null
+        ));
     }
 }

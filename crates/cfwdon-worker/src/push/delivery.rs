@@ -10,6 +10,7 @@ use crate::statuses::{
     find_local_status_by_object_uri, find_status_by_id, local_status_target_uri,
 };
 use crate::store::local_polls::find_status_poll_by_id;
+use crate::stream_hub::{notification_stream_open, stream_audience};
 use crate::tracked_d1::D1Database;
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use cfwdon_core::AppConfig;
@@ -104,7 +105,13 @@ async fn publish_local_status_update_stream_notifications_soft(
     reblog_recipient_ids: &[String],
     quote_recipient_ids: &[String],
 ) {
-    if env.is_none() {
+    let Some(stream_env) = env else {
+        return;
+    };
+    if !stream_audience(stream_env)
+        .await
+        .has_stream("user:notification")
+    {
         return;
     }
 
@@ -124,7 +131,9 @@ async fn publish_local_status_update_stream_notifications_soft(
     let mut sent = std::collections::HashSet::new();
 
     for recipient_account_id in reblog_recipient_ids {
-        if !sent.insert(format!("update:{recipient_account_id}")) {
+        if !sent.insert(format!("update:{recipient_account_id}"))
+            || !notification_stream_open(stream_env, recipient_account_id).await
+        {
             continue;
         }
         let status_response = build_local_status_response_for_recipient_soft(
@@ -151,7 +160,9 @@ async fn publish_local_status_update_stream_notifications_soft(
     }
 
     for recipient_account_id in quote_recipient_ids {
-        if !sent.insert(format!("quoted_update:{recipient_account_id}")) {
+        if !sent.insert(format!("quoted_update:{recipient_account_id}"))
+            || !notification_stream_open(stream_env, recipient_account_id).await
+        {
             continue;
         }
         let status_response = build_local_status_response_for_recipient_soft(

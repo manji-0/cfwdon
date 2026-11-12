@@ -72,6 +72,8 @@ Current trackers and notes:
   How the typed D1 Sessions API (read replication) is wired into read-heavy routes, and what remains.
 - [API Latency Reduction](planning/api-latency.md)
   Serial D1/outbound round trips removed from the main API scenarios (deferred side effects, batched rendering), with main-versus-branch measurements.
+- [D1 Query Counts: tstodon and cfwdon](planning/d1-query-counts.md)
+  D1 statements and serial rounds per API request in cfwdon and tstodon on one shared scenario, what each took from the other, and what is still expensive.
 - [Web UI Routing Modernization](planning/web-ui-routing.md)
   How `web-ui` routes pages, the preferred replacement router, and a phased spike that keeps the Rust Worker as the HTTP server.
 

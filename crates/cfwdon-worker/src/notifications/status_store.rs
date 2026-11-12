@@ -47,13 +47,13 @@ pub(crate) async fn list_local_status_notifications_for_account(
     let result = db
         .prepare(format!(
             "SELECT s.id, s.account_id, s.ap_id, s.in_reply_to_id, s.boost_of_uri, s.quote_of_uri, s.content_html, s.text_content, s.spoiler_text, s.visibility, s.sensitive, s.language, s.quote_state, s.created_at
-             FROM statuses s
-             JOIN follows f
-               ON f.target_account_id = s.account_id
-              AND f.follower_account_id = ?1
-              AND f.state = 'accepted'
-              AND f.notify = 1
-             WHERE s.account_id != ?1
+             FROM follows f
+             CROSS JOIN statuses s
+               ON s.account_id = f.target_account_id
+             WHERE f.follower_account_id = ?1
+               AND f.state = 'accepted'
+               AND f.notify = 1
+               AND s.account_id != ?1
                AND s.created_at >= strftime('%Y-%m-%dT%H:%M:%S', f.updated_at){}
              ORDER BY s.created_at DESC
              LIMIT ?2",
