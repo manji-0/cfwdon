@@ -24,7 +24,7 @@ pub(crate) const RELAY_STATE_ACCEPTED: &str = "accepted";
 pub(crate) const RELAY_STATE_REJECTED: &str = "rejected";
 
 pub(crate) const PUBLIC_REMOTE_RETENTION_DAYS: i64 = 7;
-pub(crate) const PUBLIC_REMOTE_PURGE_BATCH_SIZE: u32 = 500;
+pub(crate) const PUBLIC_REMOTE_PURGE_BATCH_SIZE: u32 = 2_000;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct FederationRelayRow {
@@ -308,16 +308,34 @@ pub(crate) async fn mark_federation_relay_rejected(
     Ok(result.meta()?.and_then(|meta| meta.changes).unwrap_or(0) > 0)
 }
 
+/// The public remote statuses past retention that one purge run examines,
+/// after the cursor `(?2, ?3)` in `(published_at, id)` order. Retained rows
+/// (followed authors, reply/boost/quote targets) stay in the table, so a run
+/// that re-read every candidate re-read them all each hour; a slice keeps the
+/// rows read per run bounded.
+const STALE_PUBLIC_REMOTE_SLICE_SQL: &str = "SELECT rs.id, rs.published_at
+     FROM remote_statuses rs
+     WHERE rs.visibility = 'public'
+       AND rs.published_at < datetime(CURRENT_TIMESTAMP, ?1)
+       AND (rs.published_at, rs.id) > (?2, ?3)
+     ORDER BY rs.published_at ASC, rs.id ASC
+     LIMIT ?4";
+
+const REMOTE_PURGE_CURSOR: &str = "purge_stale_public_remote_content";
+
 fn stale_public_remote_status_purge_sql() -> &'static str {
     // One equality per NOT EXISTS so SQLite can use boost_of_uri / quote_of_uri
     // / in_reply_to_uri indexes. A 6-way OR here table-scans remote_statuses
-    // once per candidate row.
+    // once per candidate row. `(?2, ?3]` .. `(?4, ?5]` is the slice this run
+    // examines.
     "DELETE FROM remote_statuses
      WHERE id IN (
         SELECT rs.id
         FROM remote_statuses rs
         WHERE rs.visibility = 'public'
           AND rs.published_at < datetime(CURRENT_TIMESTAMP, ?1)
+          AND (rs.published_at, rs.id) > (?2, ?3)
+          AND (rs.published_at, rs.id) <= (?4, ?5)
           AND NOT EXISTS (
             SELECT 1
             FROM follows f
@@ -365,56 +383,127 @@ fn stale_public_remote_status_purge_sql() -> &'static str {
             WHERE ref.id != rs.id
               AND ref.in_reply_to_uri = rs.url
           )
-        ORDER BY rs.published_at ASC
-        LIMIT ?2
      )"
 }
 
+/// Remote actors no status, follow or follower refers to. `NOT EXISTS` stops
+/// at the first status; the old `LEFT JOIN ... IS NULL` read every actor's
+/// whole status index.
+const UNREFERENCED_REMOTE_ACTOR_PURGE_SQL: &str = "DELETE FROM remote_actors
+     WHERE actor_uri IN (
+        SELECT ra.actor_uri
+        FROM remote_actors ra
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM remote_statuses rs
+            WHERE rs.actor_uri = ra.actor_uri
+          )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM follows f
+            WHERE f.target_actor_uri = ra.actor_uri
+              AND f.state = 'accepted'
+          )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM followers fl
+            WHERE fl.actor_uri = ra.actor_uri
+          )
+        LIMIT ?1
+     )";
+
+#[derive(Deserialize)]
+struct PurgeCursorRow {
+    published_at: String,
+    id: String,
+}
+
+#[derive(Deserialize)]
+struct SliceRow {
+    id: String,
+    published_at: String,
+}
+
+/// Deletes stale public remote statuses a slice at a time: each run examines
+/// at most `PUBLIC_REMOTE_PURGE_BATCH_SIZE` candidates after the stored
+/// cursor, deletes the ones nothing needs, and moves the cursor; a short
+/// slice means the end was reached, and the next run starts over.
 pub(crate) async fn purge_stale_public_remote_content(db: &D1Database) -> Result<u32> {
     let cutoff_modifier = format!("-{PUBLIC_REMOTE_RETENTION_DAYS} days");
-    let limit = i32::try_from(PUBLIC_REMOTE_PURGE_BATCH_SIZE).unwrap_or(500);
-    // Keep statuses still needed as boost/quote/reply targets even when the
-    // author is not followed — otherwise timeline reblogs render empty bodies.
-    let status_result = db
-        .prepare(stale_public_remote_status_purge_sql())
-        .bind_refs(&[D1Type::Text(&cutoff_modifier), D1Type::Integer(limit)])?
-        .run()
+    let limit = i32::try_from(PUBLIC_REMOTE_PURGE_BATCH_SIZE).unwrap_or(i32::MAX);
+    let cursor = db
+        .prepare("SELECT published_at, id FROM maintenance_cursors WHERE name = ?1")
+        .bind_refs(&[D1Type::Text(REMOTE_PURGE_CURSOR)])?
+        .first::<PurgeCursorRow>(None)
+        .await?
+        .unwrap_or(PurgeCursorRow {
+            published_at: String::new(),
+            id: String::new(),
+        });
+    let slice = db
+        .prepare(STALE_PUBLIC_REMOTE_SLICE_SQL)
+        .bind_refs(&[
+            D1Type::Text(&cutoff_modifier),
+            D1Type::Text(&cursor.published_at),
+            D1Type::Text(&cursor.id),
+            D1Type::Integer(limit),
+        ])?
+        .all()
         .await?;
-    let actor_result = db
-        .prepare(
-            "DELETE FROM remote_actors
-             WHERE actor_uri IN (
-                SELECT ra.actor_uri
-                FROM remote_actors ra
-                LEFT JOIN remote_statuses rs ON rs.actor_uri = ra.actor_uri
-                WHERE rs.id IS NULL
-                  AND NOT EXISTS (
-                    SELECT 1
-                    FROM follows f
-                    WHERE f.target_actor_uri = ra.actor_uri
-                      AND f.state = 'accepted'
-                  )
-                  AND NOT EXISTS (
-                    SELECT 1
-                    FROM followers fl
-                    WHERE fl.actor_uri = ra.actor_uri
-                  )
-                LIMIT ?1
-             )",
+    let slice = d1_results::<SliceRow>(&slice)?;
+    let reached_end = slice.len() < PUBLIC_REMOTE_PURGE_BATCH_SIZE as usize;
+    let mut statements = Vec::new();
+    if let Some(last) = slice.last() {
+        statements.push(
+            db.prepare(stale_public_remote_status_purge_sql())
+                .bind_refs(&[
+                    D1Type::Text(&cutoff_modifier),
+                    D1Type::Text(&cursor.published_at),
+                    D1Type::Text(&cursor.id),
+                    D1Type::Text(&last.published_at),
+                    D1Type::Text(&last.id),
+                ])?,
+        );
+    }
+    let (next_published_at, next_id) = match slice.last() {
+        Some(last) if !reached_end => (last.published_at.as_str(), last.id.as_str()),
+        _ => ("", ""),
+    };
+    statements.push(
+        db.prepare(
+            "INSERT INTO maintenance_cursors (name, published_at, id, updated_at)
+             VALUES (?1, ?2, ?3, CURRENT_TIMESTAMP)
+             ON CONFLICT(name) DO UPDATE SET
+                published_at = excluded.published_at,
+                id = excluded.id,
+                updated_at = CURRENT_TIMESTAMP",
         )
-        .bind_refs(&[D1Type::Integer(limit)])?
-        .run()
-        .await?;
-    Ok(status_result
-        .meta()?
+        .bind_refs(&[
+            D1Type::Text(REMOTE_PURGE_CURSOR),
+            D1Type::Text(next_published_at),
+            D1Type::Text(next_id),
+        ])?,
+    );
+    statements.push(
+        db.prepare(UNREFERENCED_REMOTE_ACTOR_PURGE_SQL)
+            .bind_refs(&[D1Type::Integer(limit)])?,
+    );
+    let results = db.batch(statements).await?;
+    let deleted_statuses = if slice.is_empty() {
+        0
+    } else {
+        results
+            .first()
+            .and_then(|result| result.meta().ok().flatten())
+            .and_then(|meta| meta.changes)
+            .unwrap_or(0)
+    };
+    let deleted_actors = results
+        .last()
+        .and_then(|result| result.meta().ok().flatten())
         .and_then(|meta| meta.changes)
-        .unwrap_or(0)
-        .saturating_add(
-            actor_result
-                .meta()?
-                .and_then(|meta| meta.changes)
-                .unwrap_or(0),
-        ) as u32)
+        .unwrap_or(0);
+    Ok(deleted_statuses.saturating_add(deleted_actors) as u32)
 }
 
 pub(crate) fn outbox_payload_is_public_relay_candidate(payload_json: &str) -> bool {

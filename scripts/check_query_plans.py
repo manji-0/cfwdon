@@ -201,6 +201,74 @@ def assert_thread_queries(conn: sqlite3.Connection) -> None:
             raise RuntimeError(f"{label}: expected index seeks, got:\n{plan}")
 
 
+RELAYS_RS = REPO_ROOT / "crates" / "cfwdon-worker" / "src" / "relays.rs"
+
+
+def assert_remote_purge_slices(conn: sqlite3.Connection) -> None:
+    """Run the retention purge SQL from `relays.rs` a slice at a time: each run
+    reads a bounded slice, keeps referenced statuses, and the cursor moves on."""
+    source = RELAYS_RS.read_text()
+    slice_sql = rust_str_const(source, "STALE_PUBLIC_REMOTE_SLICE_SQL")
+    purge = re.search(
+        r"fn stale_public_remote_status_purge_sql\(\) -> &'static str \{.*?\"(DELETE FROM remote_statuses.*?)\"\n\}",
+        source,
+        re.DOTALL,
+    )
+    if purge is None:
+        raise RuntimeError("stale_public_remote_status_purge_sql not found in relays.rs")
+    purge_sql = purge.group(1)
+
+    conn.execute(
+        """INSERT INTO remote_actors (
+            actor_uri, username, domain, inbox_uri, public_key_id, public_key_pem
+         ) VALUES ('https://stale.example/users/s', 's', 'stale.example',
+                   'https://stale.example/inbox', 'https://stale.example/users/s#k', 'k')"""
+    )
+    for index in range(1, 6):
+        conn.execute(
+            """INSERT INTO remote_statuses (
+                id, actor_uri, object_uri, content_html, visibility, published_at,
+                raw_object_json, in_reply_to_uri
+             ) VALUES (?, 'https://stale.example/users/s', ?, '<p>x</p>', 'public', ?, '{}', ?)""",
+            (
+                f"stale-{index}",
+                f"https://stale.example/statuses/{index}",
+                f"2020-01-0{index}T00:00:00Z",
+                # stale-5 replies to stale-2, so stale-2 must stay; nothing
+                # refers to stale-5, so it goes.
+                "https://stale.example/statuses/2" if index == 5 else None,
+            ),
+        )
+    retention = "-7 days"
+    cursor = ("", "")
+    examined: list[str] = []
+    for _ in range(3):
+        rows = conn.execute(slice_sql, (retention, cursor[0], cursor[1], 2)).fetchall()
+        stale_rows = [row for row in rows if row[0].startswith("stale-")]
+        examined.extend(row[0] for row in stale_rows)
+        if not rows:
+            break
+        last = rows[-1]
+        conn.execute(purge_sql, (retention, cursor[0], cursor[1], last[1], last[0]))
+        cursor = (last[1], last[0])
+    remaining = sorted(
+        row[0] for row in conn.execute("SELECT id FROM remote_statuses WHERE id LIKE 'stale-%'")
+    )
+    if remaining != ["stale-2"]:
+        raise RuntimeError(f"remote purge kept {remaining}, expected only stale-2")
+    followed = conn.execute(
+        "SELECT COUNT(*) FROM remote_statuses WHERE id LIKE 'rs-%'"
+    ).fetchone()[0]
+    if followed != 120:
+        raise RuntimeError(f"remote purge deleted a followed author's statuses: {followed} left")
+    if examined[:2] != ["stale-1", "stale-2"]:
+        raise RuntimeError(f"remote purge slices out of order: {examined}")
+    plan = plan_text(conn, slice_sql, (retention, "", "", 2000))
+    assert_uses_index(plan, "remote purge slice")
+    if "SCAN rs " in plan and "USING" not in plan.split("SCAN rs ", 1)[1].split(")", 1)[0]:
+        raise RuntimeError(f"remote purge slice scans remote_statuses:\n{plan}")
+
+
 def seed(conn: sqlite3.Connection) -> None:
     conn.execute(
         "INSERT INTO accounts (id, username, access_email, display_name) VALUES (?, ?, ?, ?)",
@@ -614,6 +682,7 @@ def main() -> int:
             assert_remote_home_actor_slices(conn)
             assert_retention_prunes_seek_age(conn)
             assert_thread_queries(conn)
+            assert_remote_purge_slices(conn)
     except RuntimeError as error:
         print(f"query plan check failed: {error}", file=sys.stderr)
         return 1
