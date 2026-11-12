@@ -197,7 +197,7 @@ def assert_thread_queries(conn: sqlite3.Connection) -> None:
     ):
         params = ("thread-2", 256) if label == "ancestor chain" else tree_params
         plan = plan_text(conn, sql, params)
-        if "SCAN s " in plan or "SCAN rs " in plan or "SCAN statuses" in plan:
+        if re.search(r"'(SCAN (s|rs|statuses)\b|SEARCH (s|rs) USING AUTOMATIC)", plan):
             raise RuntimeError(f"{label}: expected index seeks, got:\n{plan}")
 
 
@@ -267,6 +267,11 @@ def assert_remote_purge_slices(conn: sqlite3.Connection) -> None:
     assert_uses_index(plan, "remote purge slice")
     if "SCAN rs " in plan and "USING" not in plan.split("SCAN rs ", 1)[1].split(")", 1)[0]:
         raise RuntimeError(f"remote purge slice scans remote_statuses:\n{plan}")
+    # Each kept-if-referenced probe (boost, quote, reply) seeks its index.
+    plan = plan_text(conn, purge_sql, (retention, "", "", "2020-01-05", "stale-5"))
+    probes = re.findall(r"'(\w+) ref USING", plan)
+    if probes != ["SEARCH"] * 6:
+        raise RuntimeError(f"remote purge reference probes must seek, got:\n{plan}")
 
 
 NOTIFICATIONS_DIR = REPO_ROOT / "crates" / "cfwdon-worker" / "src" / "notifications"
@@ -468,13 +473,15 @@ def seed(conn: sqlite3.Connection) -> None:
         ts = f"2026-01-{(index % 28) + 1:02d}T12:00:00Z"
         conn.execute(
             """INSERT INTO statuses (
-                id, account_id, ap_id, content_html, text_content, visibility,
+                id, account_id, ap_id, in_reply_to_id, content_html, text_content, visibility,
                 quote_approval_policy, quote_state, created_at
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 f"status-{index}",
                 "acct-1",
                 f"https://example.com/statuses/{index}",
+                # Some replies, so ANALYZE sees `in_reply_to_id` as selective.
+                f"status-{index - 1}" if index % 4 == 0 else None,
                 "<p>x</p>",
                 "x",
                 "public",
