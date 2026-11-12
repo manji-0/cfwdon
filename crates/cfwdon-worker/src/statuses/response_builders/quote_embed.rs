@@ -126,7 +126,8 @@ async fn build_local_quoted_status_from_row(
     counts_preload: Option<&StatusCountsPreload>,
     embed: Option<&QuoteEmbedPreloads>,
 ) -> Result<Option<serde_json::Value>> {
-    let Some(subject) = resolve_local_status_response_subject(db, viewer, local_status).await?
+    let Some(subject) =
+        resolve_local_status_response_subject(db, viewer, local_status, embed).await?
     else {
         return Ok(None);
     };

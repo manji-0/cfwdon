@@ -6,7 +6,10 @@
 //! boost-heavy timeline page multiplies by its item count. This module resolves
 //! every URI on a page in a fixed number of batched queries instead.
 
-use super::{LocalStatusViewerStatePreload, RemoteStatusViewerStatePreload, StoredMentionsPreload};
+use super::{
+    LocalStatusResponsePreload, LocalStatusViewerStatePreload, RemoteStatusViewerStatePreload,
+    StoredMentionsPreload,
+};
 use super::{find_local_status_by_object_uri, find_statuses_by_ap_ids, find_statuses_by_ids};
 use crate::accounts::find_accounts_by_ids;
 use crate::activitypub::local_status_identity_from_uri;
@@ -16,10 +19,11 @@ use crate::remote::RemoteMastodonPollResponsePreload;
 use crate::remote::{
     find_remote_status_by_url_or_object_uri, find_remote_statuses_by_url_or_object_uris,
 };
+use crate::store::media::MediaAttachmentRow;
 use crate::store::remote::RemoteActorRow;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
-use cfwdon_domain::{LocalStatus, RemoteStatus};
+use cfwdon_domain::{LocalAccount, LocalStatus, RemoteStatus};
 use std::collections::{HashMap, HashSet};
 use worker::Result;
 
@@ -41,8 +45,8 @@ pub(crate) struct BoostTargetPreload {
     embed: Option<QuoteEmbedPreloads>,
 }
 
-/// Per-target data the timeline preloads for resolved targets, so a quote
-/// embed renders from memory instead of issuing its own lookups.
+/// Per-target data the timeline preloads for resolved targets, so an embedded
+/// boost or quote target renders from memory instead of issuing its own lookups.
 #[derive(Debug, Default)]
 pub(crate) struct QuoteEmbedPreloads {
     pub(crate) remote_actors: HashMap<String, RemoteActorRow>,
@@ -54,6 +58,38 @@ pub(crate) struct QuoteEmbedPreloads {
     pub(crate) local_mentions: StoredMentionsPreload,
     pub(crate) remote_mentions: StoredMentionsPreload,
     pub(crate) remote_in_reply_to: HashMap<String, Option<String>>,
+    /// Owners of local targets, keyed by account id.
+    /// Local targets whose media and reply author were batch-loaded; any other
+    /// status falls back to its own lookups even when its owner is known.
+    pub(crate) local_status_ids: HashSet<String>,
+    pub(crate) local_owners: HashMap<String, LocalAccount>,
+    pub(crate) local_media: HashMap<String, Vec<MediaAttachmentRow>>,
+    pub(crate) local_in_reply_to_account_ids: HashMap<String, String>,
+}
+
+impl QuoteEmbedPreloads {
+    /// The owner and response preload of a local target, or `None` when its
+    /// owner was not preloaded and the caller must look it up.
+    pub(crate) fn local_subject(
+        &self,
+        status: &LocalStatus,
+    ) -> Option<(LocalAccount, LocalStatusResponsePreload)> {
+        if !self.local_status_ids.contains(&status.id) {
+            return None;
+        }
+        let owner = self.local_owners.get(&status.account_id)?;
+        Some((
+            owner.clone(),
+            LocalStatusResponsePreload {
+                media: self
+                    .local_media
+                    .get(&status.id)
+                    .cloned()
+                    .unwrap_or_default(),
+                in_reply_to_account_id: self.local_in_reply_to_account_ids.get(&status.id).cloned(),
+            },
+        ))
+    }
 }
 
 impl BoostTargetPreload {
@@ -210,5 +246,61 @@ mod tests {
         );
         // Never looked up: the caller falls back to its own lookup.
         assert!(preload.target("https://example.test/statuses/2").is_none());
+    }
+
+    fn local_target(account_id: &str) -> LocalStatus {
+        LocalStatus {
+            id: "status-1".to_owned(),
+            account_id: account_id.to_owned(),
+            ap_id: None,
+            in_reply_to_id: Some("parent-1".to_owned()),
+            in_reply_to_account_id: None,
+            boost_of_uri: None,
+            quote_of_uri: None,
+            content_html: "<p>Hello</p>".to_owned(),
+            text: "Hello".to_owned(),
+            spoiler_text: String::new(),
+            visibility: cfwdon_domain::Visibility::Public,
+            sensitive: false,
+            language: None,
+            quote_approval_policy: None,
+            quote_state: cfwdon_domain::QuoteState::Accepted,
+            application_id: None,
+            card_json: None,
+            created_at: "2026-01-02T00:00:00.000Z".to_owned(),
+            updated_at: None,
+        }
+    }
+
+    #[test]
+    fn local_subject_reads_preloaded_owner_and_reply_author() {
+        let owner = LocalAccount::from_record(cfwdon_domain::LocalAccountRecord::test_fixture(
+            "acct-1", "alice",
+        ));
+        let embed = QuoteEmbedPreloads {
+            local_status_ids: HashSet::from(["status-1".to_owned()]),
+            local_owners: HashMap::from([("acct-1".to_owned(), owner)]),
+            local_in_reply_to_account_ids: HashMap::from([(
+                "status-1".to_owned(),
+                "acct-2".to_owned(),
+            )]),
+            ..QuoteEmbedPreloads::default()
+        };
+
+        let (account, preload) = embed
+            .local_subject(&local_target("acct-1"))
+            .expect("owner was preloaded");
+        assert_eq!(account.username(), "alice");
+        assert!(preload.media.is_empty());
+        assert_eq!(preload.in_reply_to_account_id.as_deref(), Some("acct-2"));
+
+        // An owner the preload never saw sends the caller back to D1.
+        assert!(embed.local_subject(&local_target("acct-9")).is_none());
+
+        // So does a status the preload never saw, even with a known owner:
+        // its media were not loaded.
+        let mut unseen = local_target("acct-1");
+        unseen.id = "status-2".to_owned();
+        assert!(embed.local_subject(&unseen).is_none());
     }
 }

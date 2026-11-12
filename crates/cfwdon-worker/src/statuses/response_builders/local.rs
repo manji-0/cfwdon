@@ -229,6 +229,7 @@ pub(super) async fn build_local_status_response_inner(
             poll_preload,
             viewer_state_preload,
             application_preload,
+            mention_preload,
             boost_target_preload,
             include_quote,
         )

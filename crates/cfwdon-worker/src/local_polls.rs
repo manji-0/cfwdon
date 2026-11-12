@@ -69,6 +69,12 @@ impl MastodonPollResponsePreload {
             .contains(status_id)
             .then(|| self.by_status_id.get(status_id).cloned())
     }
+
+    /// Merge polls preloaded for another set of statuses (e.g. boost targets).
+    pub(crate) fn extend(&mut self, other: Self) {
+        self.by_status_id.extend(other.by_status_id);
+        self.preloaded_status_ids.extend(other.preloaded_status_ids);
+    }
 }
 
 pub(crate) fn normalize_status_poll(

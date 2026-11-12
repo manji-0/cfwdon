@@ -8,6 +8,7 @@ use super::{
     preload_public_timeline_remote_viewer_state, preload_remote_in_reply_to_status_ids,
     preload_timeline_candidate_reply_account_ids,
 };
+use crate::accounts::find_accounts_by_ids;
 use crate::app_cache::load_account_capabilities;
 use crate::custom_emojis::{
     RemoteStatusFederatedEmojisPreload, config_with_resolved_custom_emojis,
@@ -16,8 +17,11 @@ use crate::custom_emojis::{
 use crate::db_utils::{d1_results, json_string_array, sql_in_json_each};
 use crate::filters::{AccountFilterMatcher, load_account_filter_matcher};
 use crate::identity::remote_account_rest_id;
-use crate::local_polls::MastodonPollResponsePreload;
-use crate::media::{RemoteStatusAttachmentRow, find_remote_status_attachments_by_status_ids};
+use crate::local_polls::{MastodonPollResponsePreload, preload_mastodon_poll_responses};
+use crate::media::{
+    RemoteStatusAttachmentRow, find_media_attachments_by_status_ids,
+    find_remote_status_attachments_by_status_ids,
+};
 use crate::remote::{
     RemoteMastodonPollResponsePreload, RemoteStatusEditUpdatedAtPreload,
     preload_remote_mastodon_poll_responses, preload_remote_status_edit_updated_at,
@@ -27,9 +31,9 @@ use crate::statuses::{
     RemoteStatusViewerStatePreload, StatusApplicationPreload, StatusQuoteCountsPreload,
     StoredMentionsPreload, StoredMentionsTable, build_local_status_response_with_timeline_preloads,
     build_remote_status_response_with_timeline_preloads, enrich_card_with_remote_preview,
-    preload_boost_targets, preload_local_status_viewer_state, preload_mention_accounts_from_texts,
-    preload_remote_status_ids_viewer_state, preload_status_applications,
-    preload_status_quote_counts, preload_stored_status_mentions,
+    load_in_reply_to_account_ids, preload_boost_targets, preload_local_status_viewer_state,
+    preload_mention_accounts_from_texts, preload_remote_status_ids_viewer_state,
+    preload_status_applications, preload_status_quote_counts, preload_stored_status_mentions,
 };
 use crate::store::remote::{RemoteActorRow, find_remote_actors_by_actor_uris};
 use crate::store::statuses::{StatusCountsPreload, preload_status_counts_for_remote_rows};
@@ -149,7 +153,7 @@ async fn preload_timeline_candidate_render_context(
     let (
         mut counts_preload,
         mut quote_counts_preload,
-        local_poll_preload,
+        mut local_poll_preload,
         mut local_viewer_state_preload,
         mut remote_viewer_state_preload,
         mut remote_poll_preload,
@@ -202,6 +206,10 @@ async fn preload_timeline_candidate_render_context(
         boost_remote_attachments,
         boost_remote_actors,
         remote_in_reply_to_preload,
+        boost_local_polls,
+        boost_local_owners,
+        boost_local_media,
+        boost_local_in_reply_to_account_ids,
     ) = futures_util::try_join!(
         // Boost targets that are not page candidates need their own viewer
         // state, or `favourited` / `reblogged` read false on the embedded status.
@@ -238,16 +246,20 @@ async fn preload_timeline_candidate_render_context(
         preload_stored_status_mentions(db, StoredMentionsTable::Local, &boost_ids.local_ids),
         preload_stored_status_mentions(db, StoredMentionsTable::Remote, &boost_ids.remote_ids),
         preload_status_counts_for_remote_rows(db, &boost_ids.local_ids, &boost_remote_status_refs),
-        preload_status_quote_counts(db, &boost_ids.remote_quote_uris),
+        preload_status_quote_counts(db, &boost_ids.quote_uris),
         preload_remote_mastodon_poll_responses(db, &boost_ids.remote_ids, viewer),
         preload_remote_status_edit_updated_at(db, &boost_ids.remote_ids),
         preload_remote_status_federated_emojis(db, &boost_ids.remote_ids),
         find_remote_status_attachments_by_status_ids(db, &boost_ids.remote_ids),
         find_remote_actors_by_actor_uris(db, &boost_ids.remote_actor_uris),
         preload_remote_in_reply_to_status_ids(db, config, candidates, &boost_remote_status_refs),
+        preload_mastodon_poll_responses(db, &boost_ids.local_ids, viewer),
+        find_accounts_by_ids(db, &boost_ids.local_account_ids),
+        find_media_attachments_by_status_ids(db, &boost_ids.local_ids),
+        load_in_reply_to_account_ids(db, &boost_ids.local_statuses),
     )?;
-    // Quote embeds resolve through the boost-target preload; hand them the
-    // target-only data so they skip per-quote lookups.
+    // Boost and quote embeds resolve through the boost-target preload; hand them the
+    // target-only data so they skip per-target lookups.
     boost_target_preload.set_embed_preloads(QuoteEmbedPreloads {
         remote_actors: boost_remote_actors.clone(),
         remote_attachments: boost_remote_attachments.clone(),
@@ -258,6 +270,14 @@ async fn preload_timeline_candidate_render_context(
         local_mentions: boost_local_mentions.clone(),
         remote_mentions: boost_remote_mentions.clone(),
         remote_in_reply_to: remote_in_reply_to_preload.clone(),
+        local_status_ids: boost_ids
+            .local_statuses
+            .iter()
+            .map(|status| status.id.clone())
+            .collect(),
+        local_owners: boost_local_owners,
+        local_media: boost_local_media,
+        local_in_reply_to_account_ids: boost_local_in_reply_to_account_ids,
     });
     mention_preload.add_stored_mentions(boost_local_mentions, boost_remote_mentions);
     if let Some(state) = boost_local_viewer_state {
@@ -266,6 +286,7 @@ async fn preload_timeline_candidate_render_context(
     if let Some(state) = boost_remote_viewer_state {
         remote_viewer_state_preload.extend(state);
     }
+    local_poll_preload.extend(boost_local_polls);
     counts_preload.extend(boost_counts);
     quote_counts_preload.extend(boost_quote_counts);
     remote_poll_preload.extend(boost_remote_polls);

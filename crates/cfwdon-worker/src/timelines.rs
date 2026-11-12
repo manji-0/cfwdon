@@ -517,40 +517,47 @@ async fn preload_remote_in_reply_to_status_ids(
 
 struct BoostTargetPreloadIds {
     local_ids: Vec<String>,
+    local_account_ids: Vec<String>,
     local_statuses: Vec<LocalStatus>,
     remote_ids: Vec<String>,
     remote_actor_uris: Vec<String>,
-    remote_quote_uris: Vec<String>,
+    /// Local targets contribute their `ap_id`; one without falls back to a
+    /// per-status count lookup.
+    quote_uris: Vec<String>,
     remote_statuses: Vec<RemoteStatus>,
 }
 
 fn collect_boost_target_preload_ids(boost_targets: &BoostTargetPreload) -> BoostTargetPreloadIds {
     let mut local_ids = Vec::new();
+    let mut local_account_ids = Vec::new();
     let mut local_statuses = Vec::new();
     let mut remote_ids = Vec::new();
     let mut remote_actor_uris = Vec::new();
-    let mut remote_quote_uris = Vec::new();
+    let mut quote_uris = Vec::new();
     let mut remote_statuses = Vec::new();
     for target in boost_targets.resolved_targets() {
         match target {
             BoostTarget::Local(status) => {
                 local_ids.push(status.id.clone());
+                local_account_ids.push(status.account_id.clone());
+                quote_uris.extend(status.ap_id.clone());
                 local_statuses.push(status.clone());
             }
             BoostTarget::Remote(status) => {
                 remote_ids.push(status.id.clone());
                 remote_actor_uris.push(status.actor_uri.clone());
-                remote_quote_uris.push(status.object_uri.clone());
+                quote_uris.push(status.object_uri.clone());
                 remote_statuses.push(status.clone());
             }
         }
     }
     BoostTargetPreloadIds {
         local_ids,
+        local_account_ids,
         local_statuses,
         remote_ids,
         remote_actor_uris,
-        remote_quote_uris,
+        quote_uris,
         remote_statuses,
     }
 }
