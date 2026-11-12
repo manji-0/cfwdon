@@ -1,5 +1,6 @@
 use super::client::publish_stream_hub_event;
 use super::naming::stream_hub_session_id_name;
+use super::registry::stream_audience;
 use worker::{Env, console_error};
 
 /// One streaming event addressed to a single hub. `tag` / `list` carry the
@@ -77,6 +78,12 @@ pub(crate) async fn publish_stream_hub_event_soft(
     hub_name: &str,
     event: &StreamHubEvent<'_>,
 ) {
+    if !stream_audience(env)
+        .await
+        .reaches(hub_name, event.stream, event.tag, event.list)
+    {
+        return;
+    }
     if let Err(error) = publish_stream_hub_event(env, binding, hub_name, &event.to_body()).await {
         console_error!(
             "failed to publish stream hub event ({}) to hub {hub_name} stream {}: {error}",
@@ -143,6 +150,17 @@ pub(crate) async fn publish_list_stream_hub_event_soft(
             .with_account_id(Some(owner_account_id)),
     )
     .await;
+}
+
+/// Whether `account_id` has a live `user:notification` subscriber, so callers
+/// can skip rendering a notification nobody would receive.
+pub(crate) async fn notification_stream_open(env: &Env, account_id: &str) -> bool {
+    stream_audience(env).await.reaches(
+        &stream_hub_session_id_name(account_id),
+        "user:notification",
+        None,
+        None,
+    )
 }
 
 pub(crate) async fn publish_notification_stream_hub_event_soft(

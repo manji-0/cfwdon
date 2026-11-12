@@ -22,8 +22,10 @@ use crate::remote::load_remote_status_updated_at;
 use crate::statuses::build_remote_status_response;
 use crate::store::remote::{RemoteActorRow, find_remote_actor_by_actor_uri};
 use crate::stream_hub::{
-    StreamHubEvent, publish_direct_stream_hub_event_soft, publish_list_stream_hub_event_soft,
-    publish_stream_hub_event_soft, publish_user_stream_hub_event_soft, stream_hub_channel_id_name,
+    StreamAudience, StreamHubEvent, publish_direct_stream_hub_event_soft,
+    publish_list_stream_hub_event_soft, publish_stream_hub_event_soft,
+    publish_user_stream_hub_event_soft, stream_audience, stream_hub_channel_id_name,
+    stream_hub_session_id_name,
 };
 use crate::tags::load_remote_status_hashtag_names;
 use crate::tracked_d1::D1Database;
@@ -82,6 +84,36 @@ fn visibility_reaches_follower_home_timelines(visibility: Visibility) -> bool {
     )
 }
 
+/// Streams a local status create can reach besides the author's own `user`
+/// stream.
+const LOCAL_STATUS_FANOUT_STREAMS: [&str; 9] = [
+    "user",
+    "public",
+    "public:local",
+    "public:media",
+    "public:local:media",
+    "hashtag",
+    "hashtag:local",
+    "list",
+    "direct",
+];
+
+/// False when no client holds a stream the fan-out publishes to, so the
+/// caller can skip rendering its payload.
+pub(crate) fn local_status_fanout_has_audience(audience: &StreamAudience) -> bool {
+    LOCAL_STATUS_FANOUT_STREAMS
+        .iter()
+        .any(|stream| audience.has_stream(stream))
+}
+
+/// Drops followers without a live `user` subscriber, so nothing is rendered
+/// or sent for them.
+fn retain_user_stream_subscribers(audience: &StreamAudience, account_ids: &mut Vec<String>) {
+    account_ids.retain(|account_id| {
+        audience.reaches(&stream_hub_session_id_name(account_id), "user", None, None)
+    });
+}
+
 async fn publish_to_hub_streams_soft(
     env: &Env,
     binding: &str,
@@ -113,6 +145,9 @@ async fn publish_follower_home_timeline_events_soft(
     payload: &str,
     event_id: Option<&str>,
 ) {
+    if !stream_audience(env).await.has_stream("user") {
+        return;
+    }
     let fanout = match list_local_follower_account_ids_for_stream_fanout(
         db,
         author_account_id,
@@ -280,6 +315,9 @@ async fn publish_list_timeline_events_soft(
         return;
     }
 
+    if !stream_audience(env).await.has_stream("list") {
+        return;
+    }
     let author_account_id = author.id();
     let membership_refs = list_membership_variants_for_local_account(author, config);
     let fanout = match list_local_account_list_stream_fanout(db, &membership_refs).await {
@@ -338,6 +376,9 @@ async fn publish_remote_list_timeline_events_soft(
         return;
     }
 
+    if !stream_audience(env).await.has_stream("list") {
+        return;
+    }
     let membership_refs = list_membership_variants_for_remote_actor(actor_row);
     let fanout = match list_local_account_list_stream_fanout(db, &membership_refs).await {
         Ok(fanout) => fanout,
@@ -388,7 +429,11 @@ async fn publish_remote_follower_home_create_events_soft(
     remote_status: &RemoteStatus,
     actor_row: &RemoteActorRow,
 ) {
-    let fanout = match list_local_follower_account_ids_for_remote_actor_stream_fanout(
+    let audience = stream_audience(env).await;
+    if !audience.has_stream("user") {
+        return;
+    }
+    let mut fanout = match list_local_follower_account_ids_for_remote_actor_stream_fanout(
         db,
         &remote_actor.actor_uri,
     )
@@ -412,6 +457,10 @@ async fn publish_remote_follower_home_create_events_soft(
         );
     }
 
+    retain_user_stream_subscribers(&audience, &mut fanout.account_ids);
+    if fanout.account_ids.is_empty() {
+        return;
+    }
     let Some(payload) =
         viewer_agnostic_remote_status_stream_payload(db, config, remote_status, actor_row).await
     else {
@@ -468,6 +517,9 @@ async fn publish_remote_follower_home_delete_events_soft(
     payload: &str,
     event_id: Option<&str>,
 ) {
+    if !stream_audience(env).await.has_stream("user") {
+        return;
+    }
     let fanout = match list_local_follower_account_ids_for_remote_actor_stream_fanout(
         db,
         remote_actor_uri,
@@ -560,6 +612,9 @@ async fn publish_direct_timeline_events_soft(
     payload: &str,
     event_id: Option<&str>,
 ) {
+    if !stream_audience(env).await.has_stream("direct") {
+        return;
+    }
     for recipient_id in
         direct_status_recipient_account_ids(db, config, author_account_id, status).await
     {
@@ -576,6 +631,10 @@ async fn publish_direct_conversation_stream_events_soft(
     author_account_id: &str,
     status: &LocalStatus,
 ) {
+    let audience = stream_audience(env).await;
+    if !audience.has_stream("direct") {
+        return;
+    }
     let conversation_id = match find_conversation_id_by_status_id(db, &status.id).await {
         Ok(Some(conversation_id)) => conversation_id,
         Ok(None) => return,
@@ -591,6 +650,14 @@ async fn publish_direct_conversation_stream_events_soft(
     for recipient_id in
         direct_status_recipient_account_ids(db, config, author_account_id, status).await
     {
+        if !audience.reaches(
+            &stream_hub_session_id_name(&recipient_id),
+            "direct",
+            None,
+            None,
+        ) {
+            continue;
+        }
         let recipient = match find_account_by_id(db, &recipient_id).await {
             Ok(Some(recipient)) => recipient,
             Ok(None) => continue,
@@ -743,6 +810,10 @@ pub(crate) async fn publish_remote_status_update_user_stream_fanout_soft(
     if !visibility_reaches_follower_home_timelines(remote_status.visibility) {
         return;
     }
+    let audience = stream_audience(env).await;
+    if !audience.has_stream("user") {
+        return;
+    }
 
     let updated_at = match load_remote_status_updated_at(db, &remote_status.id).await {
         Ok(Some(updated_at)) => updated_at,
@@ -771,7 +842,7 @@ pub(crate) async fn publish_remote_status_update_user_stream_fanout_soft(
         }
     };
 
-    let fanout = match list_local_follower_account_ids_for_remote_actor_stream_fanout(
+    let mut fanout = match list_local_follower_account_ids_for_remote_actor_stream_fanout(
         db,
         &remote_actor.actor_uri,
     )
@@ -795,6 +866,10 @@ pub(crate) async fn publish_remote_status_update_user_stream_fanout_soft(
         );
     }
 
+    retain_user_stream_subscribers(&audience, &mut fanout.account_ids);
+    if fanout.account_ids.is_empty() {
+        return;
+    }
     let Some(payload) =
         viewer_agnostic_remote_status_stream_payload(db, config, remote_status, &actor_row).await
     else {
@@ -822,6 +897,21 @@ pub(crate) async fn publish_remote_status_create_stream_fanout_soft(
         return;
     };
 
+    // The reads below only feed streams; skip them when nobody listens.
+    let audience = stream_audience(env).await;
+    let public = remote_status.visibility == Visibility::Public;
+    let public_streams = public
+        && remote_public_timeline_streams(true)
+            .into_iter()
+            .any(|stream| audience.has_stream(stream));
+    let hashtags = public && audience.has_stream("hashtag");
+    let lists = public && audience.has_stream("list");
+    let follower_homes = visibility_reaches_follower_home_timelines(remote_status.visibility)
+        && audience.has_stream("user");
+    if !(public_streams || hashtags || lists || follower_homes) {
+        return;
+    }
+
     let actor_row = match find_remote_actor_by_actor_uri(db, &remote_actor.actor_uri).await {
         Ok(Some(actor_row)) => actor_row,
         Ok(None) => return,
@@ -834,10 +924,37 @@ pub(crate) async fn publish_remote_status_create_stream_fanout_soft(
         }
     };
 
-    let has_media = remote_status_has_media(db, &remote_status.id)
-        .await
-        .unwrap_or(false);
-    let tags = remote_status_hashtag_tags(db, remote_status).await;
+    // Media only adds the media streams; skip the read when nobody holds one.
+    let has_media = (audience.has_stream("public:media")
+        || audience.has_stream("public:remote:media"))
+        && remote_status_has_media(db, &remote_status.id)
+            .await
+            .unwrap_or(false);
+    let tags = if hashtags {
+        remote_status_hashtag_tags(db, remote_status).await
+    } else {
+        Vec::new()
+    };
+    let public_reached = remote_public_timeline_streams(has_media)
+        .into_iter()
+        .any(|stream| {
+            audience.reaches(
+                &stream_hub_channel_id_name(stream, None),
+                stream,
+                None,
+                None,
+            )
+        })
+        || tags.iter().any(|tag| {
+            REMOTE_HASHTAG_STREAMS.iter().any(|stream| {
+                audience.reaches(
+                    &stream_hub_channel_id_name(stream, Some(tag)),
+                    stream,
+                    Some(tag),
+                    None,
+                )
+            })
+        });
     let event_id = Some(remote_status.id.as_str());
     let binding = &config.stream_hub_binding;
 
@@ -854,7 +971,7 @@ pub(crate) async fn publish_remote_status_create_stream_fanout_soft(
         .await;
     }
 
-    if remote_status.visibility != Visibility::Public {
+    if !(public_reached || lists) {
         return;
     }
 

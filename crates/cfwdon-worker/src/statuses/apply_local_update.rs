@@ -14,8 +14,10 @@ use crate::push::send_status_update_notifications;
 use crate::responses::MastodonStatusResponse;
 use crate::store::media::MediaAttachmentRow;
 use crate::store::statuses::preload_status_counts;
-use crate::stream_hub::publish_user_stream_hub_event_soft;
-use crate::stream_hub_publish::publish_local_status_update_stream_fanout_soft;
+use crate::stream_hub::{publish_user_stream_hub_event_soft, stream_audience};
+use crate::stream_hub_publish::{
+    local_status_fanout_has_audience, publish_local_status_update_stream_fanout_soft,
+};
 use crate::time_html::now_iso_string;
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
@@ -145,6 +147,12 @@ pub(crate) async fn apply_local_status_update(
         .await;
 
         // Timeline subscribers need the edit too, with a viewer-agnostic payload.
+        if !local_status_fanout_has_audience(&*stream_audience(env).await) {
+            return Ok(UpdateLocalStatusResult {
+                response,
+                status_id: status.id,
+            });
+        }
         let response_preload = load_local_status_response_preload(db, &status).await?;
         let has_media = !response_preload.media.is_empty();
         let status_ids = vec![status.id.clone()];

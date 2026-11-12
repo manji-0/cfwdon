@@ -6,6 +6,7 @@
 #   bash scripts/query_count/run.sh "POST"     # plus the SQL of matching rows
 #   SHAPE=1 bash scripts/query_count/run.sh    # plus normalized response bodies
 #   NOISE=20000 bash scripts/query_count/run.sh  # first add unrelated rows (noise.sql)
+#   SCENARIO=streaming bash scripts/query_count/run.sh  # streaming.mjs instead
 # Rows: QUERY_COUNT_ROW|label|status|items|statements|rounds|batches|after|
 #   rows_read|rows_written|do_requests|queue_messages|kv_reads|kv_writes|workflows
 # (statements and rounds before the response; `after` ran once it was sent;
@@ -36,4 +37,4 @@ for _ in $(seq 1 90); do
   curl -sf "localhost:$port/__qc" > /dev/null && break
   sleep 1
 done
-BASE="http://localhost:$port" VERBOSE="${1:-}" node "$here/scenario.mjs"
+BASE="http://localhost:$port" VERBOSE="${1:-}" node "$here/${SCENARIO:-scenario}.mjs"

@@ -5,16 +5,18 @@ mod fanout;
 mod logging;
 mod messages;
 mod naming;
+mod registry;
 mod retry;
 mod upgrade;
 
 pub(crate) use events::{
-    StreamHubEvent, publish_direct_stream_hub_event_soft, publish_list_stream_hub_event_soft,
-    publish_notification_stream_hub_event_soft, publish_stream_hub_event_soft,
-    publish_user_stream_hub_event_soft,
+    StreamHubEvent, notification_stream_open, publish_direct_stream_hub_event_soft,
+    publish_list_stream_hub_event_soft, publish_notification_stream_hub_event_soft,
+    publish_stream_hub_event_soft, publish_user_stream_hub_event_soft,
 };
 pub(crate) use logging::log_stream_hub_connect_event;
 pub(crate) use naming::{stream_hub_channel_id_name, stream_hub_session_id_name};
+pub(crate) use registry::{StreamAudience, stream_audience};
 pub(crate) use retry::stream_hub_sse_should_reconnect;
 pub(crate) use upgrade::{
     StreamHubUpgradeParams, connect_stream_hub_websocket, upgrade_stream_hub_websocket,
@@ -35,9 +37,12 @@ const STREAM_HUB_STREAM_HEADER: &str = "X-Stream";
 const STREAM_HUB_TAG_HEADER: &str = "X-Stream-Tag";
 const STREAM_HUB_LIST_HEADER: &str = "X-Stream-List";
 const STREAM_HUB_ACCOUNT_HEADER: &str = "X-Account-Id";
-const STREAM_HUB_INTERNAL_HEADERS: [&str; 4] = [
+/// Name the Worker addressed the hub by; the hub keys its registry rows by it.
+const STREAM_HUB_NAME_HEADER: &str = "X-Stream-Hub";
+const STREAM_HUB_INTERNAL_HEADERS: [&str; 5] = [
     STREAM_HUB_STREAM_HEADER,
     STREAM_HUB_TAG_HEADER,
     STREAM_HUB_LIST_HEADER,
     STREAM_HUB_ACCOUNT_HEADER,
+    STREAM_HUB_NAME_HEADER,
 ];
