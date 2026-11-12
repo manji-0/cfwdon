@@ -300,6 +300,117 @@ def notification_collector_sql() -> dict[str, tuple[str, str]]:
     return queries
 
 
+# Lookups served by a partial index (`WHERE col IS NOT NULL`, 137) or by the
+# index left after a duplicate was dropped. SQLite uses a partial index only
+# when the query's WHERE implies the index's, so each must still name it.
+# Foreign-key cascades look children up as `DELETE FROM child WHERE col = ?`.
+NAMED_INDEX_CHECKS: list[tuple[str, str, tuple[object, ...], str]] = [
+    (
+        "remote quotes of a status",
+        """SELECT id FROM remote_statuses
+           WHERE quote_of_uri = ?1 AND quote_state = 'accepted'""",
+        ("https://example.com/statuses/1",),
+        "idx_remote_statuses_quote_of_uri_state",
+    ),
+    (
+        "local quotes of a status by uri",
+        "SELECT id FROM statuses WHERE quote_of_uri = ?1",
+        ("https://example.com/statuses/1",),
+        "idx_statuses_quote_of_uri_state",
+    ),
+    (
+        "remote replies to a set of statuses",
+        """SELECT rs.id FROM remote_statuses rs
+           WHERE rs.in_reply_to_uri IN (SELECT value FROM json_each(?1))
+           ORDER BY rs.published_at ASC""",
+        ('["https://example.com/statuses/1"]',),
+        "idx_remote_statuses_in_reply_to_uri",
+    ),
+    (
+        "inbound Delete target by object uri or url",
+        "SELECT 1 FROM remote_statuses rs WHERE rs.object_uri = ?1 OR rs.url = ?1",
+        ("https://remote.example/@bob/1",),
+        "idx_remote_statuses_url",
+    ),
+    (
+        "remote account statuses without boosts or replies walk the actor",
+        """SELECT id FROM remote_statuses
+           WHERE actor_uri = ?1
+             AND visibility IN ('public', 'unlisted')
+             AND boost_of_uri IS NULL
+             AND in_reply_to_uri IS NULL
+           ORDER BY published_at DESC, id DESC
+           LIMIT ?2""",
+        ("https://remote.example/users/bob", 20),
+        "idx_remote_statuses_actor_published",
+    ),
+    (
+        "unreblog deletes the local reblog wrapper by target",
+        "DELETE FROM statuses WHERE account_id = ?1 AND boost_of_uri = ?2",
+        ("acct-1", "https://example.com/statuses/1"),
+        "idx_statuses_boost_of_uri",
+    ),
+    (
+        "deleted status clears local reply refs",
+        "UPDATE statuses SET in_reply_to_id = NULL WHERE in_reply_to_id = ?1",
+        ("status-1",),
+        "idx_statuses_in_reply_to_id",
+    ),
+    (
+        "favourites saved page walks the account in rowid order",
+        """SELECT rowid AS cursor_id, status_id, remote_status_id
+           FROM favourites
+           WHERE account_id = ?1
+             AND (?2 IS NULL OR rowid < ?2)
+             AND (?3 IS NULL OR rowid > ?3)
+           ORDER BY rowid DESC
+           LIMIT ?4""",
+        ("acct-1", None, None, 60),
+        "idx_favourites_account_id",
+    ),
+    (
+        "bookmarks saved page walks the account in rowid order",
+        """SELECT rowid AS cursor_id, status_id, remote_status_id
+           FROM bookmarks
+           WHERE account_id = ?1
+             AND (?2 IS NULL OR rowid < ?2)
+             AND (?3 IS NULL OR rowid > ?3)
+           ORDER BY rowid DESC
+           LIMIT ?4""",
+        ("acct-1", None, None, 60),
+        "idx_bookmarks_account_id",
+    ),
+    *(
+        (
+            f"cascade from a deleted status seeks {table}.{column}",
+            f"DELETE FROM {table} WHERE {column} = ?1",
+            ("status-1",),
+            index,
+        )
+        for table, column, index in [
+            ("favourites", "status_id", "idx_favourites_status_created"),
+            ("favourites", "remote_status_id", "idx_favourites_remote_status_created"),
+            ("reblogs", "status_id", "idx_reblogs_status_created"),
+            ("reblogs", "remote_status_id", "idx_reblogs_remote_status_created"),
+            ("bookmarks", "status_id", "idx_bookmarks_status_id"),
+            ("bookmarks", "remote_status_id", "idx_bookmarks_remote_status_id"),
+            ("remote_favourites", "status_id", "idx_remote_favourites_status_created"),
+            ("remote_reblogs", "status_id", "idx_remote_reblogs_status_created"),
+            ("follows", "target_account_id", "idx_follows_target_state"),
+        ]
+    ),
+]
+
+
+def assert_named_index_queries(conn: sqlite3.Connection) -> None:
+    for label, sql, params, index in NAMED_INDEX_CHECKS:
+        plan = plan_text(conn, sql, params)
+        if not re.search(rf"INDEX {index}\b", plan):
+            raise RuntimeError(f"{label}: expected {index}, got:\n{plan}")
+        if "LIMIT" in sql and "TEMP B-TREE" in plan:
+            raise RuntimeError(f"{label}: LIMIT must stop on the index, got:\n{plan}")
+
+
 def assert_notification_queries(conn: sqlite3.Connection) -> None:
     """Notifications are derived on every read, so each collector must seek the
     viewer's rows by an index on the notified account, never walk statuses or
@@ -868,11 +979,15 @@ def main() -> int:
             assert_thread_queries(conn)
             assert_remote_purge_slices(conn)
             assert_notification_queries(conn)
+            assert_named_index_queries(conn)
     except RuntimeError as error:
         print(f"query plan check failed: {error}", file=sys.stderr)
         return 1
 
-    print(f"query plan check ok: verified {len(checks)} critical queries")
+    print(
+        "query plan check ok: verified "
+        f"{len(checks) + len(NAMED_INDEX_CHECKS)} critical queries"
+    )
     return 0
 
 
