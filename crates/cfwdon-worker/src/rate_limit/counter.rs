@@ -4,6 +4,9 @@ use std::cell::{Cell, RefCell};
 use worker::{DurableObject, Env, Method, Request, Response, Result, State, durable_object};
 
 const TABLE_KEY: &str = "counters";
+/// How long after its last window ends an idle subject's storage stays. A
+/// subject that keeps counting moves its alarm at most once per this long.
+const CLEANUP_DELAY_MS: u64 = 60 * 60 * 1000;
 
 /// One rate-limit subject's counters (`RateLimitSubject::key` names the
 /// instance: `ip:…`, `account:…`, `token:…`, `domain:…`), so no one instance
@@ -14,13 +17,14 @@ const TABLE_KEY: &str = "counters";
 /// remaining count) are not, and it keeps D1 off the hot path.
 ///
 /// The table (a few counters) is kept in memory and written back on every
-/// hit, so an evicted instance resumes where it was; an alarm at the last
-/// window's end deletes it, so subjects seen once leave nothing behind.
+/// hit, so an evicted instance resumes where it was. Ended windows are dropped
+/// on the next hit; an alarm, armed once and left alone while it is pending,
+/// deletes the storage of a subject idle for `CLEANUP_DELAY_MS`.
 #[durable_object]
 pub struct RateLimitCounter {
     state: State,
     table: RefCell<Option<RateLimitCounterTable>>,
-    alarm_at_ms: Cell<Option<u64>>,
+    alarm_pending: Cell<bool>,
 }
 
 impl RateLimitCounter {
@@ -45,21 +49,17 @@ impl RateLimitCounter {
         let storage = self.state.storage();
         let Some(expires_at_ms) = table_expires_at_ms(&table) else {
             self.table.replace(Some(table));
-            self.alarm_at_ms.set(None);
+            self.alarm_pending.set(false);
             return storage.delete_all().await;
         };
         let raw = serde_json::to_string(&table)
             .map_err(|error| worker::Error::RustError(error.to_string()))?;
         self.table.replace(Some(table));
         storage.put(TABLE_KEY, raw).await?;
-        if self
-            .alarm_at_ms
-            .get()
-            .is_none_or(|alarm_at_ms| expires_at_ms > alarm_at_ms)
-        {
-            self.alarm_at_ms.set(Some(expires_at_ms));
+        if !self.alarm_pending.replace(true) {
+            let alarm_at_ms = expires_at_ms.saturating_add(CLEANUP_DELAY_MS);
             storage
-                .set_alarm(i64::try_from(expires_at_ms).unwrap_or(i64::MAX))
+                .set_alarm(i64::try_from(alarm_at_ms).unwrap_or(i64::MAX))
                 .await?;
         }
         Ok(())
@@ -71,7 +71,7 @@ impl DurableObject for RateLimitCounter {
         Self {
             state,
             table: RefCell::new(None),
-            alarm_at_ms: Cell::new(None),
+            alarm_pending: Cell::new(false),
         }
     }
 
@@ -90,9 +90,10 @@ impl DurableObject for RateLimitCounter {
         Response::from_json(&states)
     }
 
-    /// Drop the windows that have ended; the instance's storage goes with the last.
+    /// Drop the windows that have ended: the instance's storage goes with the
+    /// last, and a subject still counting gets the next alarm.
     async fn alarm(&self) -> Result<Response> {
-        self.alarm_at_ms.set(None);
+        self.alarm_pending.set(false);
         let mut table = self.load().await;
         count_hits(&mut table, &[], js_sys::Date::now() as u64);
         self.save(table).await?;

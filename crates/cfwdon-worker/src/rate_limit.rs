@@ -1,8 +1,9 @@
 //! Enforcing rate limits (Mastodon's Rack::Attack throttles and `RateLimiter`
 //! families; the policy is `cfwdon_domain::rate_limit`). Each subject a
 //! request counts against (its client address, its token or account, a
-//! sending server) is one `RateLimitCounter` Durable Object call. See "Rate
-//! Limits" in docs/reference/configuration.md.
+//! sending server) has one `RateLimitCounter` Durable Object, which each
+//! isolate asks only once its own count of that subject calls for it
+//! (`plan_hits`). See "Rate Limits" in docs/reference/configuration.md.
 //!
 //! The limits fail open: a counter that cannot be reached lets the request
 //! through, as an outage must not lock every client out.
@@ -16,9 +17,10 @@ use crate::oauth_store::{
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::rate_limit::{
-    RateLimitCaller, RateLimitCheck, RateLimitCounterState, RateLimitHit, RateLimitPolicy,
-    RateLimitPolicyError, RateLimitRequest, RateLimitVerdict, inbox_domain_check, ip_throttle_key,
-    is_api_path, rate_limit_checks, rate_limit_verdict,
+    LocalCounter, LocalPlan, RateLimitCaller, RateLimitCheck, RateLimitCounterState,
+    RateLimitIncrement, RateLimitPolicy, RateLimitPolicyError, RateLimitRequest, RateLimitVerdict,
+    inbox_domain_check, ip_throttle_key, is_api_path, plan_hits, rate_limit_checks,
+    rate_limit_verdict,
 };
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
@@ -47,7 +49,7 @@ const CALLER_TTL_MS: u64 = 60_000;
 /// The body the Worker posts to a `RateLimitCounter`.
 #[derive(Debug, Serialize, Deserialize)]
 struct CounterHitRequest {
-    hits: Vec<RateLimitHit>,
+    hits: Vec<RateLimitIncrement>,
     now_ms: u64,
 }
 
@@ -80,6 +82,10 @@ impl<V> BoundedMemory<V> {
         self.entries.get(key)
     }
 
+    fn get_mut(&mut self, key: &str) -> Option<&mut V> {
+        self.entries.get_mut(key)
+    }
+
     fn insert(&mut self, key: String, value: V) {
         if self.entries.insert(key.clone(), value).is_none() {
             self.order.push_back(key);
@@ -98,10 +104,8 @@ type CachedPolicy = ((String, String), Option<RateLimitPolicy>);
 
 thread_local! {
     static POLICY: RefCell<Option<CachedPolicy>> = const { RefCell::new(None) };
-    /// `subject key \n counter name` -> when its window ends, for counters seen
-    /// over their limit. Until then this isolate refuses without asking the
-    /// Durable Object, so a flood from one client costs one call per window.
-    static OVER: RefCell<BoundedMemory<u64>> = RefCell::new(BoundedMemory::new());
+    /// `subject key \n counter name` -> this isolate's view of the counter.
+    static COUNTERS: RefCell<BoundedMemory<LocalCounter>> = RefCell::new(BoundedMemory::new());
     /// Credential hash -> the caller it authenticated as, and until when.
     static CALLERS: RefCell<BoundedMemory<(RateLimitCaller, u64)>> =
         RefCell::new(BoundedMemory::new());
@@ -254,14 +258,11 @@ fn counter_namespace(env: &Env) -> Option<ObjectNamespace> {
 async fn hit_counter(
     namespace: &ObjectNamespace,
     subject_key: &str,
-    hits: &[RateLimitHit],
+    hits: Vec<RateLimitIncrement>,
     now_ms: u64,
 ) -> Result<Vec<RateLimitCounterState>> {
-    let body = serde_json::to_string(&CounterHitRequest {
-        hits: hits.to_vec(),
-        now_ms,
-    })
-    .map_err(|error| worker::Error::RustError(error.to_string()))?;
+    let body = serde_json::to_string(&CounterHitRequest { hits, now_ms })
+        .map_err(|error| worker::Error::RustError(error.to_string()))?;
     let headers = worker::Headers::new();
     headers.set("Content-Type", "application/json")?;
     let mut init = RequestInit::new();
@@ -282,45 +283,47 @@ async fn hit_counter(
     response.json().await
 }
 
-fn over_key(subject_key: &str, counter: &str) -> String {
+fn counter_key(subject_key: &str, counter: &str) -> String {
     format!("{subject_key}\n{counter}")
 }
 
-/// A counter this isolate already saw over its limit, as the state to refuse with.
-fn remembered_over(
-    subject_key: &str,
-    hits: &[RateLimitHit],
-    now_ms: u64,
-) -> Option<RateLimitCounterState> {
-    OVER.with(|over| {
-        let over = over.borrow();
-        hits.iter().find_map(|hit| {
-            let reset_at_ms = *over.get(&over_key(subject_key, &hit.name))?;
-            (reset_at_ms > now_ms).then(|| RateLimitCounterState {
-                name: hit.name.clone(),
-                limit: hit.limit,
-                count: hit.limit.saturating_add(1),
-                reset_at_ms,
-            })
-        })
-    })
-}
-
+/// Count the check in this isolate, asking the subject's Durable Object only
+/// when `plan_hits` says to.
 async fn run_check(
     namespace: &ObjectNamespace,
     check: &RateLimitCheck,
     now_ms: u64,
 ) -> Vec<RateLimitCounterState> {
     let subject_key = check.subject.key();
-    if let Some(state) = remembered_over(&subject_key, &check.hits, now_ms) {
-        return vec![state];
-    }
-    match hit_counter(namespace, &subject_key, &check.hits, now_ms).await {
+    let keys: Vec<String> = check
+        .hits
+        .iter()
+        .map(|hit| counter_key(&subject_key, &hit.name))
+        .collect();
+    let plan = COUNTERS.with(|counters| {
+        let mut counters = counters.borrow_mut();
+        let mut local: Vec<LocalCounter> = keys
+            .iter()
+            .map(|key| counters.get(key).cloned().unwrap_or_default())
+            .collect();
+        let plan = plan_hits(&mut local, &check.hits, now_ms);
+        for (key, counter) in keys.iter().zip(local) {
+            counters.insert(key.clone(), counter);
+        }
+        plan
+    });
+    let increments = match plan {
+        LocalPlan::Answered(states) => return states,
+        LocalPlan::Ask(increments) => increments,
+    };
+    match hit_counter(namespace, &subject_key, increments, now_ms).await {
         Ok(states) => {
-            OVER.with(|over| {
-                let mut over = over.borrow_mut();
-                for state in states.iter().filter(|state| state.is_over()) {
-                    over.insert(over_key(&subject_key, &state.name), state.reset_at_ms);
+            COUNTERS.with(|counters| {
+                let mut counters = counters.borrow_mut();
+                for (key, state) in keys.iter().zip(&states) {
+                    if let Some(counter) = counters.get_mut(key) {
+                        counter.record_shared(state);
+                    }
                 }
             });
             states
