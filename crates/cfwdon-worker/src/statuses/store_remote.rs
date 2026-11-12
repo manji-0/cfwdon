@@ -208,22 +208,33 @@ fn remote_public_statuses_by_tags_indexed_sql<'a>(
         .map(|tag| D1Type::Text(tag.as_str()))
         .collect::<Vec<_>>();
     let slots = append_resolved_timeline_cursor_bindings(&mut bindings, cursor);
+    // A status carrying k of the tags appears k times in the walk.
+    bindings.push(D1Type::Integer(
+        i32::try_from(u64::from(limit) * tags.len() as u64).unwrap_or(i32::MAX),
+    ));
+    let walk_limit_slot = bindings.len();
     bindings.push(D1Type::Integer(limit as i32));
     let limit_slot = bindings.len();
     let cursor_predicates =
-        seekable_resolved_timeline_cursor_predicates("rs.published_at", "rs.id", &slots);
+        seekable_resolved_timeline_cursor_predicates("h.published_at", "h.status_id", &slots);
+    // Walk `idx_remote_status_hashtags_tag_published` (its `published_at` is
+    // the status's) instead of remote_statuses: the rows read grow with the
+    // page, not with the table, which D1 bills by the row.
     let sql = format!(
         "SELECT
             {REMOTE_STATUS_WITH_ACTOR_SELECT}
          FROM remote_statuses rs
          JOIN remote_actors ra ON ra.actor_uri = rs.actor_uri
          LEFT JOIN remote_status_counts rsc ON rsc.remote_status_id = rs.id
-         WHERE rs.visibility = 'public'
-           AND rs.id IN (
+         WHERE rs.id IN (
                SELECT h.status_id
                FROM remote_status_hashtags h
+               CROSS JOIN remote_statuses tagged ON tagged.id = h.status_id
                WHERE h.tag IN ({tag_placeholders})
-           ){cursor_predicates}
+                 AND tagged.visibility = 'public'{cursor_predicates}
+               ORDER BY h.published_at {dir}, h.status_id {dir}
+               LIMIT ?{walk_limit_slot}
+           )
          ORDER BY rs.published_at {dir}, rs.id {dir}
          LIMIT ?{limit_slot}"
     );
@@ -654,13 +665,15 @@ mod tests {
         let (sql, bindings) = remote_public_statuses_by_tags_indexed_sql(&tags, &cursor, 20);
 
         assert!(sql.contains("h.tag IN (?1, ?2)"));
-        assert!(sql.contains("rs.published_at <= ?3"));
-        assert!(sql.contains("rs.id < ?4"));
-        assert!(sql.contains("rs.published_at >= ?5"));
-        assert!(sql.contains("rs.id > ?6"));
+        assert!(sql.contains("h.published_at <= ?3"));
+        assert!(sql.contains("h.status_id < ?4"));
+        assert!(sql.contains("h.published_at >= ?5"));
+        assert!(sql.contains("h.status_id > ?6"));
         assert!(sql.contains("LIMIT ?7"));
+        assert!(sql.contains("LIMIT ?8"));
         assert!(!sql.contains("IS NULL"));
-        assert!(matches!(bindings[6], D1Type::Integer(20)));
+        assert!(matches!(bindings[6], D1Type::Integer(40)));
+        assert!(matches!(bindings[7], D1Type::Integer(20)));
     }
 
     #[test]

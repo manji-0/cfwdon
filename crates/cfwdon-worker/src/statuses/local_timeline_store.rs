@@ -212,19 +212,30 @@ fn local_public_statuses_by_tags_indexed_sql<'a>(
         .map(|tag| D1Type::Text(tag.as_str()))
         .collect::<Vec<_>>();
     let slots = append_resolved_timeline_cursor_bindings(&mut bindings, cursor);
+    // A status carrying k of the tags appears k times in the walk.
+    bindings.push(D1Type::Integer(
+        i32::try_from(u64::from(limit) * tags.len() as u64).unwrap_or(i32::MAX),
+    ));
+    let walk_limit_slot = bindings.len();
     bindings.push(D1Type::Integer(limit as i32));
     let limit_slot = bindings.len();
     let cursor_predicates =
-        seekable_resolved_timeline_cursor_predicates("created_at", "id", &slots);
+        seekable_resolved_timeline_cursor_predicates("h.created_at", "h.status_id", &slots);
+    // Walk `idx_status_hashtags_tag_created` (its `created_at` is the status's)
+    // instead of the statuses table: the rows read grow with the page, not
+    // with the table, which D1 bills by the row.
     let sql = format!(
         "SELECT {LOCAL_STATUS_COLUMNS}
          FROM statuses
-         WHERE visibility = 'public'
-           AND id IN (
+         WHERE id IN (
                SELECT h.status_id
                FROM status_hashtags h
+               CROSS JOIN statuses s ON s.id = h.status_id
                WHERE h.tag IN ({tag_placeholders})
-           ){cursor_predicates}
+                 AND s.visibility = 'public'{cursor_predicates}
+               ORDER BY h.created_at {dir}, h.status_id {dir}
+               LIMIT ?{walk_limit_slot}
+           )
          ORDER BY created_at {dir}, id {dir}
          LIMIT ?{limit_slot}"
     );
@@ -459,15 +470,18 @@ mod tests {
         let (sql, bindings) = local_public_statuses_by_tags_indexed_sql(&tags, &cursor, 20);
 
         assert!(sql.contains("WHERE h.tag IN (?1, ?2)"));
-        assert!(sql.contains("created_at <= ?3"));
-        assert!(sql.contains("id < ?4"));
-        assert!(sql.contains("created_at >= ?5"));
-        assert!(sql.contains("id > ?6"));
+        assert!(sql.contains("h.created_at <= ?3"));
+        assert!(sql.contains("h.status_id < ?4"));
+        assert!(sql.contains("h.created_at >= ?5"));
+        assert!(sql.contains("h.status_id > ?6"));
         assert!(sql.contains("LIMIT ?7"));
+        assert!(sql.contains("LIMIT ?8"));
         assert!(!sql.contains("IS NULL"));
         assert!(matches!(bindings[0], D1Type::Text("rust")));
         assert!(matches!(bindings[1], D1Type::Text("wasm")));
-        assert!(matches!(bindings[6], D1Type::Integer(20)));
+        // The index walk takes a page per tag: a status may carry both.
+        assert!(matches!(bindings[6], D1Type::Integer(40)));
+        assert!(matches!(bindings[7], D1Type::Integer(20)));
     }
 
     #[test]
@@ -477,9 +491,10 @@ mod tests {
 
         let (sql, bindings) = local_public_statuses_by_tags_indexed_sql(&tags, &cursor, 9);
 
-        assert_eq!(bindings.len(), 2);
+        assert_eq!(bindings.len(), 3);
         assert!(!sql.contains("IS NULL"));
         assert!(sql.contains("LIMIT ?2"));
+        assert!(sql.contains("LIMIT ?3"));
     }
 
     #[test]
