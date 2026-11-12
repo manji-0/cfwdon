@@ -5,8 +5,11 @@
 #   bash scripts/query_count/run.sh            # the table
 #   bash scripts/query_count/run.sh "POST"     # plus the SQL of matching rows
 #   SHAPE=1 bash scripts/query_count/run.sh    # plus normalized response bodies
-# Rows: QUERY_COUNT_ROW|label|status|items|statements|rounds|batches|after
-# (statements and rounds before the response; `after` ran once it was sent).
+#   NOISE=20000 bash scripts/query_count/run.sh  # first add unrelated rows (noise.sql)
+# Rows: QUERY_COUNT_ROW|label|status|items|statements|rounds|batches|after|
+#   rows_read|rows_written|do_requests|queue_messages|kv_reads|kv_writes|workflows
+# (statements and rounds before the response; `after` ran once it was sent;
+# the billed columns are totals, deferred work included).
 # tstodon prints the same rows from its query-count.bench.test.ts.
 set -euo pipefail
 repo="$(cd "$(dirname "$0")/../.." && pwd)"
@@ -22,6 +25,10 @@ cp "$here/entry.mjs" "$repo/crates/cfwdon-worker/build/query-count-entry.mjs"
 cd "$repo"
 wrangler d1 migrations apply DB --local -c "$config" --persist-to "$state" > /dev/null
 wrangler d1 execute DB --local -c "$config" --persist-to "$state" --file "$here/seed.sql" > /dev/null
+if [ "${NOISE:-0}" -gt 0 ]; then
+  sed "s/@N@/$NOISE/g" "$here/noise.sql" > "$state/noise.sql"
+  wrangler d1 execute DB --local -c "$config" --persist-to "$state" --file "$state/noise.sql" > /dev/null
+fi
 setsid wrangler dev -c "$config" --persist-to "$state" --port "$port" > "$state/dev.log" 2>&1 &
 pgid=$!
 trap 'kill -- -"$pgid" 2>/dev/null || true; rm -f "$config"' EXIT

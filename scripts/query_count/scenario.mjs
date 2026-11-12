@@ -9,7 +9,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const call = async (who, method, path, body) => {
   const r = await fetch(base + path, {
     method,
-    headers: { Authorization: `Bearer ${tok[who]}`, ...(body ? { "Content-Type": "application/json" } : {}) },
+    headers: { Authorization: `Bearer ${tok[who]}`, "CF-Connecting-IP": "203.0.113.7", ...(body ? { "Content-Type": "application/json" } : {}) },
     body: body ? JSON.stringify(body) : undefined,
   });
   const text = await r.text();
@@ -29,9 +29,14 @@ const measure = async (label, who, method, path, body) => {
   await sleep(600);
   const later = await qc();
   const after = { statements: total.statements - before.statements + later.statements };
+  const sum = (key) => total[key] + later[key];
   const size = Array.isArray(r.json) ? r.json.length : "";
-  console.log(`QUERY_COUNT_ROW|${label}|${r.status}|${size}|${before.statements}|${before.rounds}|${before.batches}|${after.statements}`);
-  if (verbose && label.includes(verbose)) console.log((before.sql ?? []).map((s) => "  " + String(s).replace(/\s+/g, " ").slice(0, 160)).join("\n"));
+  // Rows and binding calls are totals, deferred work included: all of it is billed.
+  console.log(`QUERY_COUNT_ROW|${label}|${r.status}|${size}|${before.statements}|${before.rounds}|${before.batches}|${after.statements}|${sum("rowsRead")}|${sum("rowsWritten")}|${sum("doRequests")}|${sum("queueMessages")}|${sum("kvReads")}|${sum("kvWrites")}|${sum("workflowCreates")}`);
+  if (verbose && label.includes(verbose)) {
+    console.log((before.sql ?? []).map((s) => "  " + String(s).replace(/\s+/g, " ").slice(0, 160)).join("\n"));
+    console.log([...total.rowsBySql, ...later.rowsBySql].sort((a, b) => Number(b.split(" ")[0]) - Number(a.split(" ")[0])).slice(0, 8).map((line) => "QUERY_ROWS " + line).join("\n"));
+  }
   return r.json;
 };
 // warm up: migrates legacy plaintext tokens to hashes
