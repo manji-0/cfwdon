@@ -165,14 +165,10 @@ pub fn remote_actor_cached_handle_allowed(
 ) -> bool {
     let expected_username = expected_username.trim().to_ascii_lowercase();
     let stored_username = stored_username.trim().to_ascii_lowercase();
-    if expected_username.is_empty()
-        || stored_username != expected_username
-        || !remote_actor_uri_matches_acct_domain(actor_uri, expected_domain)
-        || !remote_actor_uri_matches_acct_domain(actor_uri, stored_domain)
-    {
-        return false;
-    }
-    true
+    !expected_username.is_empty()
+        && stored_username == expected_username
+        && remote_actor_uri_matches_acct_domain(actor_uri, expected_domain)
+        && remote_actor_uri_matches_acct_domain(actor_uri, stored_domain)
 }
 
 #[cfg(test)]

@@ -718,14 +718,10 @@ pub(crate) fn status_matches_search_timestamp(
     {
         return false;
     }
-    if parsed_query
+    !parsed_query
         .excluded_during
         .iter()
         .any(|(start, end)| timestamp >= start.as_str() && timestamp < end.as_str())
-    {
-        return false;
-    }
-    true
 }
 
 fn status_search_seed_query(parsed_query: &ParsedStatusSearchQuery) -> &str {
