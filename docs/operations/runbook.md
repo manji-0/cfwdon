@@ -136,7 +136,7 @@ The binding name `METRICS` is a constant in the worker crate. A commented copy o
 | `queue.batch` | message count, duration ms | none | once per queue batch |
 | `metrics.dropped` | dropped, written | invocation, index that lost most | once, when a budget ran out |
 
-The route class is deliberately coarse (`api/v1/statuses`, `users`, `.well-known/webfinger`; anything unknown is `other`) so scanners cannot create endless labels. `cron.task` task names are `outbox_queue_kick`, `collection_approvals`, `expired_polls`, `scheduled_statuses`, `reclaim_background_jobs`, `background_jobs`, `reclaim_inbox`, `purge_mutes`, `purge_idempotency_keys`, `purge_remote_content`, `prune_federation_activities`, `instance_activity_cache`, `public_timeline_cache` (hourly) and `trending_tags`, `trending_statuses` (every six hours).
+The route class is deliberately coarse (`api/v1/statuses`, `users`, `.well-known/webfinger`; anything unknown is `other`) so scanners cannot create endless labels. `cron.task` task names are `outbox_queue_kick`, `collection_approvals`, `expired_polls`, `scheduled_statuses`, `reclaim_background_jobs`, `background_jobs`, `reclaim_inbox`, `purge_mutes`, `purge_idempotency_keys`, `purge_cursor_tombstones`, `purge_remote_content`, `prune_federation_activities`, `instance_activity_cache`, `public_timeline_cache` (hourly) and `trending_tags`, `trending_statuses` (every six hours).
 
 Cloudflare drops data points past 250 per Worker invocation without an error. Each invocation therefore writes at most 249 and spends the last on `metrics.dropped`. Concurrent requests in one isolate share the budget of the latest invocation start, so the cap is approximate. Query the dataset through the Analytics Engine SQL API; `index1` is the index, `doubleN` and `blobN` follow the positions above:
 
@@ -175,7 +175,7 @@ The same lists are in the admin UI (`/admin`) and at `GET /api/cfwdon/admin/deli
 
 ### Cron Health
 
-Two triggers: `17 * * * *` runs hourly maintenance (queue kick, remote collection approval revalidation, expired polls, due scheduled statuses, stale job and inbox reclaim, background jobs, mute and idempotency-key purge, remote content purge, federation retention, the status mentions backfill, instance activity and public timeline caches, then the stored media backfill). `17 */6 * * *` refreshes trending tags and statuses. A step that fails logs a `console_error` and the rest still run. With the Analytics Engine binding, `cron.task` gives per-step durations; without it, use the invocation duration in the Workers dashboard. An unknown cron string logs `scheduled: unknown cron trigger` and does nothing, so check that `wrangler.toml` and the constants in `lib.rs` agree after changing a schedule.
+Two triggers: `17 * * * *` runs hourly maintenance (queue kick, remote collection approval revalidation, expired polls, due scheduled statuses, stale job and inbox reclaim, background jobs, mute, idempotency-key and timeline cursor tombstone purge, remote content purge, federation retention, the status mentions backfill, instance activity and public timeline caches, then the stored media backfill). `17 */6 * * *` refreshes trending tags and statuses. A step that fails logs a `console_error` and the rest still run. With the Analytics Engine binding, `cron.task` gives per-step durations; without it, use the invocation duration in the Workers dashboard. An unknown cron string logs `scheduled: unknown cron trigger` and does nothing, so check that `wrangler.toml` and the constants in `lib.rs` agree after changing a schedule.
 
 ### D1
 
@@ -306,6 +306,7 @@ A DLQ would add one more queue to create, name and monitor, a second consumer, a
 | Terminal `outbox_deliveries`, `outbound_activities`, processed `inbox_activities` | `FEDERATION_ACTIVITY_RETENTION_DAYS`, default 30; `0` keeps all. Up to 5,000 rows per table per hourly run. | `federation_retention.rs` |
 | Public remote statuses and unreferenced remote actors | 7 days since publication, kept while followed, a follower's, or still referenced as a boost, quote or reply target. Up to 500 per run. | `relays.rs` |
 | Expired mutes, status idempotency keys | Purged hourly. | `lib.rs` cron |
+| `timeline_cursor_tombstones` (timeline position of a deleted status, so a paging cursor that names it still resolves) | 7 days since the delete; purged hourly. | `store/statuses/cursor_tombstones.rs` |
 | `media_metadata_backfill` rows | Deleted as each object is handled. | `media_metadata_backfill.rs` |
 | Workers Observability logs | Cloudflare's retention for your plan. | dashboard |
 

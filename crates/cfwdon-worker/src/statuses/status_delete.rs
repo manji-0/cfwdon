@@ -3,6 +3,9 @@ use crate::delivery::{
     enqueue_addressed_delete_activity, enqueue_direct_delete_activity,
     outbox_delete_insert_statement,
 };
+use crate::store::statuses::{
+    RECORD_LOCAL_STATUS_TOMBSTONE_SQL, RECORD_REBLOG_WRAPPER_TOMBSTONES_SQL,
+};
 use crate::tracked_d1::D1Database;
 use cfwdon_core::AppConfig;
 use cfwdon_domain::{LocalAccount, LocalStatus};
@@ -15,13 +18,16 @@ pub(crate) async fn delete_reblog_wrapper_status_by_target_uri(
     target_uri: &str,
 ) -> Result<()> {
     let bindings = reblog_wrapper_status_target_bindings(account_id, target_uri);
-    db.prepare(
-        "DELETE FROM statuses
-         WHERE account_id = ?1
-           AND boost_of_uri = ?2",
-    )
-    .bind_refs(bindings.iter())?
-    .run()
+    db.batch(vec![
+        db.prepare(RECORD_REBLOG_WRAPPER_TOMBSTONES_SQL)
+            .bind_refs(bindings.iter())?,
+        db.prepare(
+            "DELETE FROM statuses
+             WHERE account_id = ?1
+               AND boost_of_uri = ?2",
+        )
+        .bind_refs(bindings.iter())?,
+    ])
     .await?;
     Ok(())
 }
@@ -88,6 +94,10 @@ pub(crate) async fn delete_local_status_with_outbox(
              WHERE status_id = ?1",
         )
         .bind_refs(bindings.iter())?,
+    );
+    statements.push(
+        db.prepare(RECORD_LOCAL_STATUS_TOMBSTONE_SQL)
+            .bind_refs(bindings.iter())?,
     );
     statements.push(
         db.prepare(

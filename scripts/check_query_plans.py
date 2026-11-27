@@ -134,6 +134,26 @@ def rust_str_const(source: str, name: str) -> str:
     return match.group(1)
 
 
+CURSOR_TOMBSTONES_RS = (
+    REPO_ROOT / "crates" / "cfwdon-worker" / "src" / "store" / "statuses" / "cursor_tombstones.rs"
+)
+
+
+def assert_timeline_cursor_queries(conn: sqlite3.Connection) -> None:
+    """Every timeline page with `max_id` / `min_id` resolves its cursor first, so
+    the lookup must seek each source by id, and the cron purge of deleted-status
+    cursors must seek by age."""
+    source = CURSOR_TOMBSTONES_RS.read_text(encoding="utf-8")
+    lookup = rust_str_const(source, "CURSOR_TIMESTAMP_SQL")
+    plan = plan_text(conn, lookup, ("status-1",))
+    for table in ("statuses", "remote_statuses", "timeline_cursor_tombstones"):
+        assert_seeks_alias(plan, "timeline cursor timestamp lookup", table)
+    purge = rust_str_const(source, "PURGE_TOMBSTONES_SQL")
+    plan = plan_text(conn, purge, ("-7 days",))
+    if "deleted_at<?" not in plan:
+        raise RuntimeError(f"timeline cursor tombstone purge: expected a seek on deleted_at, got:\n{plan}")
+
+
 def assert_thread_queries(conn: sqlite3.Connection) -> None:
     """Run the thread context SQL as written in `store_local.rs` (not a copy)
     on a mixed local/remote thread, so a broken query fails here, not as a 500."""
@@ -977,6 +997,7 @@ def main() -> int:
             assert_remote_home_actor_slices(conn)
             assert_retention_prunes_seek_age(conn)
             assert_thread_queries(conn)
+            assert_timeline_cursor_queries(conn)
             assert_remote_purge_slices(conn)
             assert_notification_queries(conn)
             assert_named_index_queries(conn)

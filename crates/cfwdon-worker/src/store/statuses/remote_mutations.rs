@@ -32,13 +32,15 @@ pub(crate) async fn delete_remote_status_by_id(db: &D1Database, status_id: &str)
     .run()
     .await?;
 
-    let status_id = D1Type::Text(status_id);
-    db.prepare(
-        "DELETE FROM remote_statuses
-         WHERE id = ?1",
-    )
-    .bind_refs(&status_id)?
-    .run()
+    db.batch(vec![
+        db.prepare(super::RECORD_REMOTE_STATUS_TOMBSTONE_SQL)
+            .bind_refs(bindings.iter())?,
+        db.prepare(
+            "DELETE FROM remote_statuses
+             WHERE id = ?1",
+        )
+        .bind_refs(bindings.iter())?,
+    ])
     .await?;
 
     Ok(())

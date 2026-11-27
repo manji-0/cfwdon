@@ -24,7 +24,9 @@ use crate::runtime_config::load_config_from_env;
 use crate::scheduled_statuses::process_due_scheduled_statuses_for_config;
 use crate::statuses::run_status_mentions_backfill;
 use crate::store::relationship::purge_expired_mutes;
-use crate::store::statuses::purge_expired_status_idempotency_keys;
+use crate::store::statuses::{
+    purge_expired_status_idempotency_keys, purge_expired_timeline_cursor_tombstones,
+};
 use crate::tags::refresh_trending_tags_cache;
 use crate::timelines::refresh_public_timeline_cache;
 use crate::tracked_d1::D1Database;
@@ -291,6 +293,14 @@ async fn scheduled(event: ScheduledEvent, env: Env, _ctx: ScheduleContext) {
             .await
             {
                 console_error!("status idempotency key purge failed: {error}");
+            }
+            if let Err(error) = timed_cron_task(
+                "purge_cursor_tombstones",
+                purge_expired_timeline_cursor_tombstones(&db),
+            )
+            .await
+            {
+                console_error!("timeline cursor tombstone purge failed: {error}");
             }
             if let Err(error) = timed_cron_task(
                 "purge_remote_content",
