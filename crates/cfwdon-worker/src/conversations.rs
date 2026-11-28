@@ -35,6 +35,10 @@ struct ConversationsQuery {
     min_id: Option<String>,
 }
 
+fn non_blank(value: Option<&str>) -> Option<&str> {
+    value.map(str::trim).filter(|value| !value.is_empty())
+}
+
 fn conversations_limit(value: Option<u32>) -> u32 {
     value.unwrap_or(20).clamp(1, 40)
 }
@@ -280,8 +284,9 @@ pub(crate) async fn conversations_response(
         &db,
         owner.id(),
         conversations_limit(query.limit),
-        query.max_id.as_deref(),
-        query.min_id.as_deref().or(query.since_id.as_deref()),
+        non_blank(query.max_id.as_deref()),
+        non_blank(query.since_id.as_deref()),
+        non_blank(query.min_id.as_deref()),
     )
     .await?;
 

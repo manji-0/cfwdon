@@ -1,6 +1,7 @@
 import { errAsync, okAsync, ResultAsync } from "neverthrow";
 import { HttpError, type MastodonFetchError } from "@/domain/errors/http-error";
-import type { PageQuery } from "@/domain/pagination";
+import type { Page, PageQuery } from "@/domain/pagination";
+import { parseMastodon, type ArkParser } from "@/infrastructure/mastodon/parse";
 
 type JsonResult<T> = ResultAsync<T, MastodonFetchError>;
 
@@ -17,10 +18,34 @@ export const pageParams = (query: PageQuery): URLSearchParams => {
 const parseJson = (response: Response): JsonResult<unknown> =>
   ResultAsync.fromPromise(response.json(), HttpError.fromUnknown);
 
-export const mastodonFetchJson = (
+/**
+ * `max_id` of the `rel="next"` entry in a `Link` response header, or null when
+ * there is no next page. Some endpoints page by an internal numeric cursor that
+ * differs from the item ids, so the header is the only reliable source.
+ */
+export const nextMaxIdFromLinkHeader = (header: string | null): string | null => {
+  if (!header) {
+    return null;
+  }
+  for (const entry of header.matchAll(/<([^>]*)>((?:\s*;\s*[^;,<]+)*)/g)) {
+    const [, target = "", params = ""] = entry;
+    const rel = /;\s*rel\s*=\s*"?([^";,]*)"?/i.exec(params)?.[1] ?? "";
+    if (!rel.toLowerCase().split(/\s+/).includes("next")) {
+      continue;
+    }
+    try {
+      return new URL(target, "http://localhost").searchParams.get("max_id") || null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+};
+
+const fetchOkResponse = (
   path: string,
   init: RequestInit = {},
-): JsonResult<unknown> =>
+): ResultAsync<Response, MastodonFetchError> =>
   ResultAsync.fromPromise(
     fetch(path, {
       ...init,
@@ -31,18 +56,39 @@ export const mastodonFetchJson = (
       },
     }),
     HttpError.fromUnknown,
-  ).andThen((response): JsonResult<unknown> => {
+  ).andThen((response): ResultAsync<Response, MastodonFetchError> => {
     if (!response.ok) {
       return ResultAsync.fromPromise(
         HttpError.fromResponse(response),
         HttpError.fromUnknown,
       ).andThen((error) => errAsync(error));
     }
-    if (response.status === 204) {
-      return okAsync(null);
-    }
-    return parseJson(response);
+    return okAsync(response);
   });
+
+export const mastodonFetchJson = (
+  path: string,
+  init: RequestInit = {},
+): JsonResult<unknown> =>
+  fetchOkResponse(path, init).andThen((response): JsonResult<unknown> =>
+    response.status === 204 ? okAsync(null) : parseJson(response),
+  );
+
+/** GET a paginated collection and page it by the `Link: rel="next"` cursor. */
+export const mastodonFetchPage = <T>(
+  path: string,
+  parser: ArkParser<ReadonlyArray<T>>,
+): ResultAsync<Page<T>, MastodonFetchError> =>
+  fetchOkResponse(path).andThen((response) =>
+    parseJson(response).andThen((raw) =>
+      parseMastodon(parser, raw).map(
+        (items): Page<T> => ({
+          items,
+          nextMaxId: nextMaxIdFromLinkHeader(response.headers.get("Link")),
+        }),
+      ),
+    ),
+  );
 
 const sendJson =
   (method: "POST" | "PATCH" | "PUT" | "DELETE") =>

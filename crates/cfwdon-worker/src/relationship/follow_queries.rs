@@ -447,6 +447,11 @@ pub(crate) async fn list_local_follower_account_ids_for_remote_actor_stream_fano
     .await
 }
 
+/// The follower list merges `follows` (local followers) and `followers`
+/// (remote ones), two tables whose rowids are unrelated, yet it is paged by one
+/// cursor. Each row's `cursor_id` is therefore a key that orders like the list:
+/// creation time in seconds, then a bit naming the table (0 here, 1 for
+/// `followers`), then the low 29 bits of the rowid.
 pub(crate) async fn list_local_followers_for_account(
     db: &D1Database,
     account_id: &str,
@@ -454,7 +459,9 @@ pub(crate) async fn list_local_followers_for_account(
     let account_id = D1Type::Text(account_id);
     let result = db
         .prepare(
-            "SELECT rowid AS cursor_id, follower_account_id AS account_id, created_at
+            "SELECT (COALESCE(CAST(strftime('%s', created_at) AS INTEGER), 0) << 30)
+                        | (rowid & 536870911) AS cursor_id,
+                    follower_account_id AS account_id, created_at
              FROM follows
              WHERE target_account_id = ?1
                AND state = 'accepted'
@@ -473,7 +480,9 @@ pub(crate) async fn list_remote_followers_for_account(
     let account_id = D1Type::Text(account_id);
     let result = db
         .prepare(
-            "SELECT rowid AS cursor_id, actor_uri, created_at
+            "SELECT (COALESCE(CAST(strftime('%s', created_at) AS INTEGER), 0) << 30)
+                        | 536870912 | (rowid & 536870911) AS cursor_id,
+                    actor_uri, created_at
              FROM followers
              WHERE account_id = ?1
              ORDER BY created_at DESC, rowid DESC",

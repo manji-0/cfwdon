@@ -309,33 +309,56 @@ pub(crate) async fn upsert_conversation_state(
     Ok(())
 }
 
+/// One page of an account's conversations, newest activity first.
+///
+/// Conversation ids are random, so the paging cursor is the
+/// `(updated_at, conversation_id)` of the cursor conversation, the order the
+/// list is sorted by. `min_id` (and `since_id`) page toward newer rows;
+/// `min_id` takes the rows next to the cursor and `since_id` the newest ones.
+/// A cursor naming no conversation of the account matches nothing.
 pub(crate) async fn list_conversations_for_account(
     db: &D1Database,
     account_id: &str,
     limit: u32,
     max_id: Option<&str>,
+    since_id: Option<&str>,
     min_id: Option<&str>,
 ) -> Result<Vec<ConversationRow>> {
+    const CURSOR_ROW: &str = "(SELECT updated_at, conversation_id
+                 FROM conversation_states
+                 WHERE account_id = ?1 AND conversation_id = ";
+    let forward = min_id.is_some();
+    let lower = min_id.or(since_id);
+    let order = if forward {
+        "ORDER BY updated_at ASC, conversation_id ASC"
+    } else {
+        "ORDER BY updated_at DESC, conversation_id DESC"
+    };
+    let sql = format!(
+        "SELECT conversation_id AS id, last_status_id, unread
+         FROM conversation_states
+         WHERE account_id = ?1
+           AND deleted_at IS NULL
+           AND (?2 IS NULL OR (updated_at, conversation_id) < {CURSOR_ROW}?2))
+           AND (?3 IS NULL OR (updated_at, conversation_id) > {CURSOR_ROW}?3))
+         {order}
+         LIMIT ?4"
+    );
     let result = db
-        .prepare(
-            "SELECT conversation_id AS id, last_status_id, unread
-             FROM conversation_states
-             WHERE account_id = ?1
-               AND deleted_at IS NULL
-               AND (?2 IS NULL OR conversation_id < ?2)
-               AND (?3 IS NULL OR conversation_id > ?3)
-             ORDER BY updated_at DESC, conversation_id DESC
-             LIMIT ?4",
-        )
+        .prepare(&sql)
         .bind_refs(&[
             D1Type::Text(account_id),
             max_id.map_or(D1Type::Null, D1Type::Text),
-            min_id.map_or(D1Type::Null, D1Type::Text),
+            lower.map_or(D1Type::Null, D1Type::Text),
             D1Type::Integer(limit as i32),
         ])?
         .all()
         .await?;
-    d1_results::<ConversationRow>(&result)
+    let mut rows = d1_results::<ConversationRow>(&result)?;
+    if forward {
+        rows.reverse();
+    }
+    Ok(rows)
 }
 
 pub(crate) async fn find_conversation_for_account(

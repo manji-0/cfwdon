@@ -671,7 +671,7 @@ fn timeline_cursor_requested(pagination: &TimelinePaginationQuery) -> bool {
     has_max_id || has_min_id
 }
 
-fn timeline_cursor_is_unresolved(
+pub(crate) fn timeline_cursor_is_unresolved(
     pagination: &TimelinePaginationQuery,
     cursor: &ResolvedTimelineCursor,
 ) -> bool {

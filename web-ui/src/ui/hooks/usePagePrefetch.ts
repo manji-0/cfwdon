@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import {
   createPagePrefetch,
+  type FetchedPage,
   type PagePrefetch,
   type PrefetchItem,
 } from "@/ui/lib/page-prefetch";
 
 export const usePagePrefetch = <T extends PrefetchItem>(
-  fetchNext: (maxId: string) => Promise<ReadonlyArray<T>>,
+  fetchNext: (maxId: string) => Promise<ReadonlyArray<T> | FetchedPage<T>>,
 ): PagePrefetch<T> => {
   const fetchRef = useRef(fetchNext);
   fetchRef.current = fetchNext;

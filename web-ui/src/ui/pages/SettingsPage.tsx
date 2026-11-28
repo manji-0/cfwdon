@@ -42,7 +42,8 @@ import { LoadMoreFooter } from "@/ui/components/LoadMoreFooter";
 import { MeBackLink } from "@/ui/components/MeHubNav";
 import { useSession } from "@/ui/context/SessionContext";
 import { usePwaInstall } from "@/ui/hooks/usePwaInstall";
-import { TIMELINE_PAGE_LIMIT, pageHasMore } from "@/ui/lib/pagination";
+import { appendUnique } from "@/domain/pagination";
+import { TIMELINE_PAGE_LIMIT } from "@/ui/lib/pagination";
 import { formatExpiry } from "@/ui/lib/time";
 
 const POLICY_FIELDS = [
@@ -120,8 +121,11 @@ export const SettingsPage = () => {
   const [filterExpirePreset, setFilterExpirePreset] = useState<FilterExpirePreset>("never");
   const [editingFilterId, setEditingFilterId] = useState<string | null>(null);
   const [domainInput, setDomainInput] = useState("");
-  const [mutesHasMore, setMutesHasMore] = useState(false);
-  const [blocksHasMore, setBlocksHasMore] = useState(false);
+  // Server `Link` cursors; mutes/blocks page by an internal id, not the account id.
+  const [mutesNextMaxId, setMutesNextMaxId] = useState<string | null>(null);
+  const [blocksNextMaxId, setBlocksNextMaxId] = useState<string | null>(null);
+  const mutesHasMore = mutesNextMaxId !== null;
+  const blocksHasMore = blocksNextMaxId !== null;
   const [loadingMoreMutes, setLoadingMoreMutes] = useState(false);
   const [loadingMoreBlocks, setLoadingMoreBlocks] = useState(false);
 
@@ -182,12 +186,12 @@ export const SettingsPage = () => {
     setCredentials(credentialsResult.value);
     settle("通知ポリシー", policyResult, setNotificationPolicy);
     settle("ミュート", mutesResult, (value) => {
-      setMutes(value);
-      setMutesHasMore(pageHasMore(value.length));
+      setMutes(value.items);
+      setMutesNextMaxId(value.nextMaxId);
     });
     settle("ブロック", blocksResult, (value) => {
-      setBlocks(value);
-      setBlocksHasMore(pageHasMore(value.length));
+      setBlocks(value.items);
+      setBlocksNextMaxId(value.nextMaxId);
     });
     settle("キーワードフィルター", filtersResult, setFilters);
     settle("ドメインブロック", domainsResult, setDomainBlocks);
@@ -407,35 +411,36 @@ export const SettingsPage = () => {
   };
 
   const handleLoadMoreMutes = async () => {
-    const last = mutes.at(-1);
-    if (!last || loadingMoreMutes) {
+    if (!mutesNextMaxId || loadingMoreMutes) {
       return;
     }
     setLoadingMoreMutes(true);
-    const result = await fetchMutedAccounts({ maxId: last.id, limit: TIMELINE_PAGE_LIMIT });
+    const result = await fetchMutedAccounts({ maxId: mutesNextMaxId, limit: TIMELINE_PAGE_LIMIT });
     setLoadingMoreMutes(false);
     if (result.isErr()) {
       setSectionMessage(mastodonErrorMessage(result.error));
       return;
     }
-    setMutesHasMore(pageHasMore(result.value.length));
-    setMutes((current) => [...current, ...result.value]);
+    setMutesNextMaxId(result.value.nextMaxId);
+    setMutes((current) => appendUnique(current, result.value.items));
   };
 
   const handleLoadMoreBlocks = async () => {
-    const last = blocks.at(-1);
-    if (!last || loadingMoreBlocks) {
+    if (!blocksNextMaxId || loadingMoreBlocks) {
       return;
     }
     setLoadingMoreBlocks(true);
-    const result = await fetchBlockedAccounts({ maxId: last.id, limit: TIMELINE_PAGE_LIMIT });
+    const result = await fetchBlockedAccounts({
+      maxId: blocksNextMaxId,
+      limit: TIMELINE_PAGE_LIMIT,
+    });
     setLoadingMoreBlocks(false);
     if (result.isErr()) {
       setSectionMessage(mastodonErrorMessage(result.error));
       return;
     }
-    setBlocksHasMore(pageHasMore(result.value.length));
-    setBlocks((current) => [...current, ...result.value]);
+    setBlocksNextMaxId(result.value.nextMaxId);
+    setBlocks((current) => appendUnique(current, result.value.items));
   };
 
   const handleBlockDomain = async () => {

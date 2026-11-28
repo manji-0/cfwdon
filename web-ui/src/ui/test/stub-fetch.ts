@@ -52,11 +52,10 @@ export const stubFetch = (
     const method = (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
     recorded.push({ method, path, body: parseBody(init) });
     const handler = routes[`${method} ${path}`];
-    if (handler === undefined) {
-      throw new Error(`unexpected fetch ${method} ${path}`);
+    if (handler === undefined) {      throw new Error(`unexpected fetch ${method} ${path}`);
     }
     if (typeof handler === "function") {
-      return handler(new Request(raw, init));
+      return handler(new Request(new URL(raw, "http://localhost"), init));
     }
     return jsonResponse(handler);
   }) as typeof fetch;

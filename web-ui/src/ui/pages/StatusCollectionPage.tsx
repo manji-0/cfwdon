@@ -3,7 +3,7 @@ import { mastodonErrorMessage } from "@/application/mastodon-error";
 import { ForegroundResume } from "@/domain/cache/foreground-resume";
 import { Status } from "@/domain/status/status";
 import type { MastodonFetchError } from "@/domain/errors/http-error";
-import type { PageQuery } from "@/domain/pagination";
+import { appendUnique, type Page, type PageQuery } from "@/domain/pagination";
 import { AppShell } from "@/ui/components/AppShell";
 import { ListStatus } from "@/ui/components/ListStatus";
 import { LoadMoreFooter } from "@/ui/components/LoadMoreFooter";
@@ -12,14 +12,18 @@ import { useSession } from "@/ui/context/SessionContext";
 import { useForegroundCatchUp } from "@/ui/hooks/useForegroundCatchUp";
 import { usePagePrefetch } from "@/ui/hooks/usePagePrefetch";
 import { useStatusActions } from "@/ui/components/useStatusActions";
-import { TIMELINE_PAGE_LIMIT, pageHasMore } from "@/ui/lib/pagination";
+import { fetchedPageHasMore, toFetchedPage, type FetchedPage } from "@/ui/lib/page-prefetch";
+import { TIMELINE_PAGE_LIMIT } from "@/ui/lib/pagination";
 import type { ResultAsync } from "neverthrow";
 
 type StatusCollectionPageProps = Readonly<{
   title: string;
   emptyMessage: string;
   header?: ReactNode;
-  fetchPage: (query: PageQuery) => ResultAsync<ReadonlyArray<Status>, MastodonFetchError>;
+  /** A bare array pages by last item id; a `Page` pages by its server `nextMaxId`. */
+  fetchPage: (
+    query: PageQuery,
+  ) => ResultAsync<ReadonlyArray<Status> | Page<Status>, MastodonFetchError>;
 }>;
 
 export const StatusCollectionPage = ({
@@ -38,12 +42,14 @@ export const StatusCollectionPage = ({
   const loadingMoreRef = useRef(false);
   const statusesRef = useRef(statuses);
   statusesRef.current = statuses;
-  const prefetch = usePagePrefetch(async (maxId: string) => {
+  // Cursor for the next page: server `nextMaxId`, or undefined to use the last item id.
+  const nextMaxIdRef = useRef<string | null | undefined>(undefined);
+  const prefetch = usePagePrefetch(async (maxId: string): Promise<FetchedPage<Status>> => {
     const result = await fetchPage({ maxId, limit: TIMELINE_PAGE_LIMIT });
     if (result.isErr()) {
       throw new Error(mastodonErrorMessage(result.error));
     }
-    return result.value;
+    return toFetchedPage(result.value);
   });
 
   const loadPage = useCallback(async () => {
@@ -51,9 +57,11 @@ export const StatusCollectionPage = ({
     if (result.isErr()) {
       throw new Error(mastodonErrorMessage(result.error));
     }
-    setHasMore(pageHasMore(result.value.length));
-    setStatuses(result.value);
-    prefetch.prepareNext(result.value, result.value.length);
+    const first = toFetchedPage(result.value);
+    nextMaxIdRef.current = first.nextMaxId;
+    setHasMore(fetchedPageHasMore(first));
+    setStatuses(first.items);
+    prefetch.prepareNext(first.items, first.items.length, first.nextMaxId);
   }, [fetchPage, prefetch]);
 
   const catchUpPage = useCallback(() => {
@@ -95,7 +103,8 @@ export const StatusCollectionPage = ({
 
   const handleLoadMore = async () => {
     const last = statusesRef.current.at(-1);
-    if (!last || loadingMoreRef.current) {
+    const cursor = nextMaxIdRef.current === undefined ? last?.id : nextMaxIdRef.current;
+    if (!cursor || loadingMoreRef.current) {
       return;
     }
     loadingMoreRef.current = true;
@@ -104,15 +113,16 @@ export const StatusCollectionPage = ({
     }
     setError("");
     try {
-      const page = await prefetch.takeNext(last.id);
-      if (page.length === 0) {
+      const page = await prefetch.takeNextPage(cursor);
+      if (page.items.length === 0) {
         setHasMore(false);
         return;
       }
-      const next = [...statusesRef.current, ...page];
-      setHasMore(pageHasMore(page.length));
+      const next = appendUnique(statusesRef.current, page.items);
+      nextMaxIdRef.current = page.nextMaxId;
+      setHasMore(fetchedPageHasMore(page));
       setStatuses(next);
-      prefetch.prepareNext(next, page.length);
+      prefetch.prepareNext(next, page.items.length, page.nextMaxId);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "続きの読み込みに失敗しました");
     } finally {

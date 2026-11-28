@@ -46,7 +46,8 @@ use crate::time_html::now_iso_string;
 use crate::timelines::{
     ResolvedTimelineCursor, TimelinePaginationQuery, append_resolved_timeline_cursor_bindings,
     build_timeline_link_header, keep_timeline_page, resolve_timeline_cursor,
-    seekable_resolved_timeline_cursor_predicates, timeline_fetch_limit, timeline_limit,
+    seekable_resolved_timeline_cursor_predicates, timeline_cursor_is_unresolved,
+    timeline_fetch_limit, timeline_limit,
 };
 use crate::tracked_d1::D1Database;
 use cfwdon_domain::{LocalStatus, LocalStatusRecord, OwnerQuoteAction, QuoteState, RemoteStatus};
@@ -106,6 +107,9 @@ pub(crate) async fn status_quotes_response(
     let db = bind_request_d1(&ctx, &config)?;
     let viewer = find_authenticated_local_account(&req, &db, &config).await?;
     let cursor = resolve_timeline_cursor(&db, &pagination).await?;
+    if timeline_cursor_is_unresolved(&pagination, &cursor) {
+        return Response::from_json(&Vec::<serde_json::Value>::new());
+    }
 
     let Some(status_id) = ctx
         .param("id")

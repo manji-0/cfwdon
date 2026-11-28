@@ -149,10 +149,12 @@ async fn resolve_search_status_bound_timestamp(
     Ok(None)
 }
 
+/// Rows to read for a page, never more than 200: a deep `offset` must not widen
+/// the scan (nor wrap the `LIMIT` binding), it only pages past the window.
 fn search_status_query_limit(limit: u32, offset: u32, has_text_terms: bool) -> u32 {
     let needed = limit.saturating_add(offset).max(limit);
     if has_text_terms {
-        needed.saturating_mul(4).min(200).max(needed)
+        needed.saturating_mul(4).min(200)
     } else {
         // Filter-only queries (from:/has:/is:) keep SQL date order as the sort key, so
         // oversampling only multiplies expensive status hydration work.
@@ -638,7 +640,9 @@ mod tests {
     fn search_status_query_limit_oversamples_text_queries_only() {
         assert_eq!(search_status_query_limit(20, 0, true), 80);
         assert_eq!(search_status_query_limit(40, 20, true), 200);
-        assert_eq!(search_status_query_limit(250, 0, true), 250);
+        // A deep offset never widens the scan past 200 rows (or wraps the LIMIT binding).
+        assert_eq!(search_status_query_limit(40, u32::MAX, true), 200);
+        assert_eq!(search_status_query_limit(40, 1_000_000_000, false), 200);
         assert_eq!(search_status_query_limit(20, 0, false), 20);
         assert_eq!(search_status_query_limit(40, 20, false), 60);
     }
