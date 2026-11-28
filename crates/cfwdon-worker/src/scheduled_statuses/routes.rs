@@ -251,7 +251,13 @@ pub(crate) async fn scheduled_statuses_response(
     .await?;
     let has_next = statuses.len() as u32 > limit;
     if has_next {
-        statuses.truncate(limit as usize);
+        if min_id.is_some() {
+            // `min_id` reads oldest first and reverses to newest first, so the
+            // extra row is the newest one; the oldest sits next to the cursor.
+            statuses.drain(..statuses.len() - limit as usize);
+        } else {
+            statuses.truncate(limit as usize);
+        }
     }
     let mut documents = Vec::new();
     for status in &statuses {

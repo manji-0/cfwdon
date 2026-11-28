@@ -250,7 +250,7 @@ pub(super) async fn streaming_public_batch(
     Ok(streaming_batch_from_entries(
         entries,
         tracked_status_ids,
-        "conversation",
+        "update",
     ))
 }
 
