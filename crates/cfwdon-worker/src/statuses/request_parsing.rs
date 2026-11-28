@@ -88,11 +88,23 @@ pub(crate) struct StatusMediaAttributeRequest {
 #[derive(Debug, Default, Deserialize)]
 pub(crate) struct AccountStatusesQuery {
     pub(crate) limit: Option<u32>,
-    #[serde(rename = "max_id")]
+    #[serde(
+        default,
+        rename = "max_id",
+        deserialize_with = "crate::request_utils::deserialize_cursor_param"
+    )]
     pub(crate) max_id: Option<String>,
-    #[serde(rename = "since_id")]
+    #[serde(
+        default,
+        rename = "since_id",
+        deserialize_with = "crate::request_utils::deserialize_cursor_param"
+    )]
     pub(crate) since_id: Option<String>,
-    #[serde(rename = "min_id")]
+    #[serde(
+        default,
+        rename = "min_id",
+        deserialize_with = "crate::request_utils::deserialize_cursor_param"
+    )]
     pub(crate) min_id: Option<String>,
     #[serde(
         default,

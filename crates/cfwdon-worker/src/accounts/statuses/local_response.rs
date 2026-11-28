@@ -156,12 +156,18 @@ async fn respond_local_account_statuses_json(
     );
     // Page links follow the fetched window, so a page whose statuses are all
     // filtered out still points past itself.
-    let link = build_timeline_link_header(
-        req,
-        limit,
-        statuses.first().map(|status| status.id.as_str()),
-        statuses.last().map(|status| status.id.as_str()),
-    )?;
+    // The pinned list has no cursor, so a link would send a client back to
+    // the same list for ever.
+    let link = if query.pinned.unwrap_or(false) {
+        None
+    } else {
+        build_timeline_link_header(
+            req,
+            limit,
+            statuses.first().map(|status| status.id.as_str()),
+            statuses.last().map(|status| status.id.as_str()),
+        )?
+    };
     let status_ids = statuses
         .iter()
         .map(|status| status.id.clone())

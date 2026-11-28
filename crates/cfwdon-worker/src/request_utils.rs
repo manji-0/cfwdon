@@ -110,6 +110,20 @@ pub(crate) fn query_array_param(url: &Url, key: &str) -> Option<Vec<String>> {
     (!values.is_empty()).then_some(values)
 }
 
+/// A paging cursor in the query string: blank counts as absent, as for the
+/// other timelines, instead of naming a status that does not exist.
+pub(crate) fn deserialize_cursor_param<'de, D>(
+    deserializer: D,
+) -> std::result::Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = <Option<String> as serde::Deserialize>::deserialize(deserializer)?;
+    Ok(value
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty()))
+}
+
 /// Query booleans the way Rails casts them: blank is absent, `0` / `f` /
 /// `false` / `off` are false, anything else is true. Plain `serde_urlencoded`
 /// only accepts `true` / `false` and rejects the whole query otherwise.

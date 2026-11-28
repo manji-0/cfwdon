@@ -814,7 +814,10 @@ pub(crate) async fn follow_requests_response(
     let mut requests = list_pending_follow_requests(&db, viewer.id()).await?;
     requests.retain(|entry| max_id.is_none_or(|value| entry.cursor_id() < value));
     requests.retain(|entry| since_id.is_none_or(|value| entry.cursor_id() > value));
-    if requests.len() > limit as usize {
+    // Judged on the rows, before accounts that fail to build are dropped: a
+    // short page must not hide the rest of the list.
+    let has_next = requests.len() > limit as usize;
+    if has_next {
         requests.truncate(limit as usize);
     }
 
@@ -833,7 +836,7 @@ pub(crate) async fn follow_requests_response(
         limit,
         first_id,
         last_id,
-        accounts.len() as u32 >= limit,
+        has_next,
         max_id.is_some() || since_id.is_some(),
     )? {
         builder = builder.with_header("Link", &link_header)?;
@@ -946,7 +949,10 @@ pub(crate) async fn notification_requests_response(
     requests.retain(|entry| max_id.is_none_or(|value| entry.cursor_id() < value));
     requests.retain(|entry| since_id.is_none_or(|value| entry.cursor_id() > value));
     requests.retain(|entry| min_id.is_none_or(|value| entry.cursor_id() > value));
-    if requests.len() > limit as usize {
+    // Judged on the rows, before accounts that fail to build are dropped: a
+    // short page must not hide the rest of the list.
+    let has_next = requests.len() > limit as usize;
+    if has_next {
         requests.truncate(limit as usize);
     }
 
@@ -965,7 +971,7 @@ pub(crate) async fn notification_requests_response(
         limit,
         first_id,
         last_id,
-        documents.len() as u32 >= limit,
+        has_next,
         max_id.is_some() || since_id.is_some() || min_id.is_some(),
     )? {
         builder = builder.with_header("Link", &link_header)?;
