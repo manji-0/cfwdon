@@ -47,7 +47,7 @@
               pkgs.wrangler
               pkgs.worker-build
               # Must match the wasm-bindgen version in Cargo.lock.
-              pkgs.wasm-bindgen-cli_0_2_129
+              pkgs.wasm-bindgen-cli_0_2_130
               pkgs.binaryen
               pkgs.cargo-generate
               pkgs.just
