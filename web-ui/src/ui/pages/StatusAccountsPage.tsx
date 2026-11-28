@@ -12,7 +12,8 @@ import { AccountRow } from "@/ui/components/AccountRow";
 import { AppShell } from "@/ui/components/AppShell";
 import { LoadMoreFooter } from "@/ui/components/LoadMoreFooter";
 import { usePagePrefetch } from "@/ui/hooks/usePagePrefetch";
-import { TIMELINE_PAGE_LIMIT, pageHasMore } from "@/ui/lib/pagination";
+import { appendUnique } from "@/domain/pagination";
+import { TIMELINE_PAGE_LIMIT } from "@/ui/lib/pagination";
 
 type InteractionKind = "favourited-by" | "reblogged-by";
 
@@ -28,9 +29,11 @@ export const StatusAccountsPage = ({ kind }: Readonly<{ kind: InteractionKind }>
   accountsRef.current = accounts;
   const title = kind === "favourited-by" ? "いいねした人" : "ブーストした人";
   const fetchPage = kind === "favourited-by" ? fetchStatusFavouritedBy : fetchStatusRebloggedBy;
+  // Paged by the cursor in the Link header (absent when the server sends one page).
+  const nextMaxIdRef = useRef<string | null>(null);
   const prefetch = usePagePrefetch(async (maxId: string) => {
     if (!statusId) {
-      return [];
+      return { items: [], nextMaxId: null };
     }
     const result = await fetchPage(statusId, { maxId, limit: TIMELINE_PAGE_LIMIT });
     if (result.isErr()) {
@@ -47,9 +50,11 @@ export const StatusAccountsPage = ({ kind }: Readonly<{ kind: InteractionKind }>
     if (result.isErr()) {
       throw new Error(mastodonErrorMessage(result.error));
     }
-    setHasMore(pageHasMore(result.value.length));
-    setAccounts(result.value);
-    prefetch.prepareNext(result.value, result.value.length);
+    const { items, nextMaxId } = result.value;
+    nextMaxIdRef.current = nextMaxId;
+    setHasMore(nextMaxId !== null);
+    setAccounts(items);
+    prefetch.prepareNext(items, items.length, nextMaxId);
   }, [fetchPage, prefetch, statusId]);
 
   useEffect(() => {
@@ -73,8 +78,8 @@ export const StatusAccountsPage = ({ kind }: Readonly<{ kind: InteractionKind }>
   }, [load]);
 
   const handleLoadMore = async () => {
-    const last = accountsRef.current.at(-1);
-    if (!last || loadingMoreRef.current) {
+    const cursor = nextMaxIdRef.current;
+    if (!cursor || loadingMoreRef.current) {
       return;
     }
     loadingMoreRef.current = true;
@@ -82,15 +87,16 @@ export const StatusAccountsPage = ({ kind }: Readonly<{ kind: InteractionKind }>
       setLoadingMore(true);
     }
     try {
-      const page = await prefetch.takeNext(last.id);
-      if (page.length === 0) {
+      const page = await prefetch.takeNextPage(cursor);
+      if (page.items.length === 0) {
         setHasMore(false);
         return;
       }
-      const next = [...accountsRef.current, ...page];
-      setHasMore(pageHasMore(page.length));
+      const next = appendUnique(accountsRef.current, page.items);
+      nextMaxIdRef.current = page.nextMaxId ?? null;
+      setHasMore(nextMaxIdRef.current !== null);
       setAccounts(next);
-      prefetch.prepareNext(next, page.length);
+      prefetch.prepareNext(next, page.items.length, nextMaxIdRef.current);
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "続きの読み込みに失敗しました");
     } finally {

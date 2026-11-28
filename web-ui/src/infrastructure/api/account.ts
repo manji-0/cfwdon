@@ -2,8 +2,8 @@ import { type ResultAsync } from "neverthrow";
 import type { AccountProfile } from "@/domain/account/account";
 import type { Status } from "@/domain/status/status";
 import type { MastodonFetchError } from "@/domain/errors/http-error";
-import type { PageQuery } from "@/domain/pagination";
-import { mastodonFetchJson, pageParams } from "@/infrastructure/http/mastodon-fetch";
+import type { Page, PageQuery } from "@/domain/pagination";
+import { mastodonFetchJson, mastodonFetchPage, pageParams } from "@/infrastructure/http/mastodon-fetch";
 import { parseMastodon } from "@/infrastructure/mastodon/parse";
 import {
   parseAccountProfile,
@@ -49,23 +49,24 @@ const fetchAccountCollection = (
   accountId: string,
   collection: "followers" | "following",
   query: PageQuery = {},
-): ResultAsync<ReadonlyArray<AccountProfile>, MastodonFetchError> => {
+): ResultAsync<Page<AccountProfile>, MastodonFetchError> => {
   const params = pageParams(query);
-  return mastodonFetchJson(
+  return mastodonFetchPage(
     `/api/v1/accounts/${encodeURIComponent(accountId)}/${collection}?${params}`,
-  ).andThen((raw) => parseMastodon(parseAccountProfileList, raw));
+    parseAccountProfileList,
+  );
 };
 
 export const fetchAccountFollowers = (
   accountId: string,
   query: PageQuery = {},
-): ResultAsync<ReadonlyArray<AccountProfile>, MastodonFetchError> =>
+): ResultAsync<Page<AccountProfile>, MastodonFetchError> =>
   fetchAccountCollection(accountId, "followers", query);
 
 export const fetchAccountFollowing = (
   accountId: string,
   query: PageQuery = {},
-): ResultAsync<ReadonlyArray<AccountProfile>, MastodonFetchError> =>
+): ResultAsync<Page<AccountProfile>, MastodonFetchError> =>
   fetchAccountCollection(accountId, "following", query);
 
 /** Adapter for `application/load-profile-snapshot`'s `ProfileSnapshotSource` port. */

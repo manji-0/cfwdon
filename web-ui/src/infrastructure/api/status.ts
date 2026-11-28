@@ -6,10 +6,11 @@ import type { StatusSource } from "@/domain/status/source";
 import type { Status, StatusContext } from "@/domain/status/status";
 import type { StatusTranslation } from "@/domain/status/translation";
 import type { MastodonFetchError } from "@/domain/errors/http-error";
-import type { PageQuery } from "@/domain/pagination";
+import type { Page, PageQuery } from "@/domain/pagination";
 import {
   mastodonDeleteJson,
   mastodonFetchJson,
+  mastodonFetchPage,
   mastodonPostJson,
   mastodonPutJson,
   pageParams,
@@ -220,18 +221,20 @@ export const unmuteConversation = (statusId: string): ResultAsync<Status, Mastod
 export const fetchStatusFavouritedBy = (
   statusId: string,
   query: PageQuery = {},
-): ResultAsync<ReadonlyArray<AccountProfile>, MastodonFetchError> =>
-  mastodonFetchJson(
+): ResultAsync<Page<AccountProfile>, MastodonFetchError> =>
+  mastodonFetchPage(
     `/api/v1/statuses/${encodeURIComponent(statusId)}/favourited_by?${pageParams(query)}`,
-  ).andThen((raw) => parseMastodon(parseAccountProfileList, raw));
+    parseAccountProfileList,
+  );
 
 export const fetchStatusRebloggedBy = (
   statusId: string,
   query: PageQuery = {},
-): ResultAsync<ReadonlyArray<AccountProfile>, MastodonFetchError> =>
-  mastodonFetchJson(
+): ResultAsync<Page<AccountProfile>, MastodonFetchError> =>
+  mastodonFetchPage(
     `/api/v1/statuses/${encodeURIComponent(statusId)}/reblogged_by?${pageParams(query)}`,
-  ).andThen((raw) => parseMastodon(parseAccountProfileList, raw));
+    parseAccountProfileList,
+  );
 
 export const fetchStatusQuotes = (
   statusId: string,
