@@ -161,6 +161,9 @@ pub(crate) fn append_remote_status_id_cursor_parts<'a>(
     )
 }
 
+/// A cursor naming a status deleted since the page was served still resolves,
+/// through `timeline_cursor_tombstones`, to the position the status held, so a
+/// client can keep paging.
 fn append_status_id_cursor_parts<'a>(
     bindings: &mut Vec<D1Type<'a>>,
     source_table: &str,
@@ -178,9 +181,15 @@ fn append_status_id_cursor_parts<'a>(
         let slot = bindings.len();
         parts.with_clauses.push(format!(
             "max_cursor AS (
-                SELECT id, {timestamp_column}
-                FROM {source_table}
-                WHERE id = ?{slot}
+                SELECT id, {timestamp_column} FROM (
+                    SELECT id, {timestamp_column}
+                    FROM {source_table}
+                    WHERE id = ?{slot}
+                    UNION ALL
+                    SELECT id, timestamp AS {timestamp_column}
+                    FROM timeline_cursor_tombstones
+                    WHERE id = ?{slot}
+                )
                 LIMIT 1
              )"
         ));
@@ -199,9 +208,15 @@ fn append_status_id_cursor_parts<'a>(
         let slot = bindings.len();
         parts.with_clauses.push(format!(
             "min_cursor AS (
-                SELECT id, {timestamp_column}
-                FROM {source_table}
-                WHERE id = ?{slot}
+                SELECT id, {timestamp_column} FROM (
+                    SELECT id, {timestamp_column}
+                    FROM {source_table}
+                    WHERE id = ?{slot}
+                    UNION ALL
+                    SELECT id, timestamp AS {timestamp_column}
+                    FROM timeline_cursor_tombstones
+                    WHERE id = ?{slot}
+                )
                 LIMIT 1
              )"
         ));

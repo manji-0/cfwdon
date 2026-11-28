@@ -1,9 +1,9 @@
 use super::{
     PublicTimelineCandidate, PublicTimelineCandidateEntry, TimelinePaginationQuery,
-    candidate_render, local_status_actor_uri, muted_local_timeline_status_ids,
-    preload_local_timeline_rows_from_status_refs, resolve_timeline_cursor,
-    select_public_timeline_candidates, timeline_fetch_limit, timeline_limit,
-    timeline_response_from_entries,
+    candidate_render, empty_timeline_response, local_status_actor_uri,
+    muted_local_timeline_status_ids, preload_local_timeline_rows_from_status_refs,
+    resolve_timeline_cursor, select_public_timeline_candidates, timeline_cursor_is_unresolved,
+    timeline_fetch_limit, timeline_limit, timeline_response_from_entries,
 };
 use crate::content_helpers::extract_mentions_from_text;
 use crate::db_session::{open_bound_request_session, with_d1_bookmark};
@@ -57,6 +57,9 @@ pub(crate) async fn direct_timeline_response(
         None => return Response::error("Auth0 authentication required", 401),
     };
     let cursor = resolve_timeline_cursor(&db, &query).await?;
+    if timeline_cursor_is_unresolved(&query, &cursor) {
+        return with_d1_bookmark(empty_timeline_response()?, &session);
+    }
     let filter_matcher = load_account_filter_matcher(&db, viewer.id()).await?;
     let mention_pattern = format!(
         "%@{}@{}%",
